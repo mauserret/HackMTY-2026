@@ -1,68 +1,189 @@
-# HackMTY 2026 — Banorte × Tec de Monterrey
+# BanAI backend
 
-Interfaces que la IA construye en tiempo real: un chatbot conectado a un
-servidor MCP que genera componentes de UI (A2UI) según la intención del usuario.
+Backend de la demo Banorte para HackMTY. Expone HTTP y WebSocket desde un mismo
+servidor, genera respuestas A2UI y ejecuta toda operación financiera mediante un
+servidor MCP aislado por stdio.
 
-## Estructura
+Requiere Node.js 20 o posterior.
 
-```
-HackMTY_2026/
-├── hackmty-backend/     Node.js — MongoDB Atlas, tools de MCP, servidor WebSocket
-└── hackmty-app/         React Native (Expo) — chat + renderizado dinámico de A2UI
-```
-
-## 1. Backend
+## Inicio rápido sin secretos
 
 ```bash
-cd hackmty-backend
 npm install
-copy .env.example .env      # Windows (o "cp" en Mac/Linux)
-# edita .env con tu MONGODB_URI real
-npm run seed                # carga los 4 usuarios de prueba
-npm start                   # levanta el servidor WebSocket en ws://localhost:4000
-```
-
-`server.js` ahora mismo usa reglas simples (`processMessage`) en vez del LLM real —
-es un stub para poder probar el flujo completo (front ↔ WebSocket ↔ Mongo) antes
-de tener la orquestación con el modelo lista. Ahí es donde conecta MCP de verdad:
-cuando lo tengan, reemplacen `processMessage` por la llamada al agente, que a su vez
-invoca `getBalance`, `getContacts`, `createTransaction` o `getCreditPlans` de
-`mcpTools.js` como tools.
-
-## 2. Frontend (Expo / React Native)
-
-```bash
-cd hackmty-app
-npm install
-```
-
-Antes de correrlo, abre `src/services/socket.js` y cambia `SERVER_URL` por la IP
-local de la laptop donde corre el backend (no uses `localhost` — el celular no
-la puede resolver). Para saber tu IP:
-
-- Windows: `ipconfig` → busca "IPv4 Address"
-- Mac: `ifconfig | grep inet`
-
-Ambos dispositivos (laptop y celular) deben estar en la **misma red WiFi**.
-
-```bash
 npm start
 ```
 
-Esto abre Expo Dev Tools; escanea el QR con la app **Expo Go** en tu celular
-(Android o iOS) para probar la app sin necesidad de compilarla nativamente.
+Sin `MONGODB_URI`, el subproceso MCP inicia automáticamente con cuatro usuarios,
+12 contactos y un plan de crédito en memoria. Esta modalidad es funcional pero
+efímera: todos los cambios se pierden al reiniciar.
 
-## 3. Flujo de la demo
+La contraseña maestra de la demo es `1234`, salvo que `DEMO_PASSWORD` indique
+otra. Los usuarios son:
 
-1. Usuario escribe (o dice) "¿Cuál es mi saldo?" → backend regresa `balance_card`.
-2. "Quiero pagar menos intereses" → backend regresa `credit_plan_table`.
-3. "Haz una transacción a Timoteo" → backend regresa `transfer_form` con botón de confirmar.
-4. Al confirmar, el front manda `confirm_transfer` por el mismo socket → backend
-   actualiza los balances en MongoDB y regresa `transfer_success`.
+- `Mau` — Mauricio Rey (`u1`)
+- `Timo` — Timoteo Aguilar (`u2`)
+- `Esteban` — Esteban Esquivel (`u3`)
+- `Brau` — Braulio Garcia (`u4`)
 
-## Pendientes
+Comprueba el proceso:
 
-- [ ] Reemplazar `processMessage` en `server.js` por la orquestación real con el LLM + MCP.
-- [ ] Agregar el botón de micrófono en `ChatScreen.js` (grabar audio → transcribir → `sendUserMessage`).
-- [ ] Decidir Whisper API vs. transcripción integrada del LLM (ver conversación con Claude).
-- [ ] Servidor MCP formal envolviendo `mcpTools.js` (protocolo MCP real, no llamadas directas).
+```bash
+curl http://localhost:4000/health
+curl http://localhost:4000/api/demo-users
+```
+
+`/health` reporta explícitamente `storage: "memory"` o `storage: "mongodb"` y
+si la persistencia está activa.
+
+## MongoDB Atlas
+
+```bash
+cp .env.example .env
+# Configura MONGODB_URI en .env
+npm run seed
+npm start
+```
+
+La base por defecto es `hackmty_db`. `npm run seed` reemplaza los datos de las
+colecciones demo, por lo que no debe ejecutarse contra una base con información
+que se quiera conservar.
+
+Se crean índices únicos para usernames, cuentas, contactos, planes de crédito e
+idempotency keys, además de índices para historiales. En Atlas, las transferencias
+usan una transacción MongoDB con `snapshot` y escritura `majority`. En un servidor
+Mongo que no soporte transacciones se usa una ruta serializada con compensación;
+esa ruta no ofrece las mismas garantías ACID ante la caída completa del proceso.
+
+## Arquitectura
+
+```text
+cliente
+  └─ HTTP/WebSocket → server.js
+                         ├─ llm.js → Gemini o fallback local
+                         └─ mcpClient.js
+                              └─ stdio JSON-RPC → mcp/server.js
+                                                    ├─ mcpTools.js
+                                                    └─ db.js → Atlas o memoria
+```
+
+- `server.js` nunca importa la lógica de negocio.
+- `mcpClient.js` inicia `mcp/server.js` con `StdioClientTransport`.
+- `mcp/server.js` publica las tools y reserva stdout exclusivamente para
+  JSON-RPC; sus diagnósticos van a stderr.
+- `mcpTools.js` concentra validación y lógica financiera.
+- `llm.js` obtiene los esquemas con `listTools` y ejecuta consultas con
+  `callTool`. `createTransaction` nunca se expone a Gemini.
+
+Las seis tools MCP publicadas son exactamente:
+
+- `getBalance({ userId })`
+- `getContacts({ userId })`
+- `getCreditPlans({ accountId })`
+- `createTransaction({ fromUserId, toAlias, amount, requestId? })`
+- `saveInteraction({ userId, prompt, response })`
+- `saveRating({ interactionId, rating })`
+
+## WebSocket
+
+Conecta a `ws://localhost:4000`. Al abrirse, el servidor envía:
+
+```json
+{"type":"demo_users","users":[{"id":"u1","name":"Mauricio Rey","username":"Mau"}]}
+```
+
+Inicia sesión:
+
+```json
+{"type":"auth_login","username":"Mau","password":"1234"}
+```
+
+El servidor responde `auth_success` con el usuario y su overview. Una vez
+autenticado admite:
+
+```json
+{"type":"user_message","text":"¿Cuál es mi saldo?"}
+{"type":"audio_stream","audio_base64":"BASE64","mime_type":"audio/webm"}
+{"type":"confirm_transfer","request_id":"UUID_DEL_FORMULARIO"}
+{"type":"rate_interaction","interaction_id":"ID_RECIBIDO","rating":10}
+{"type":"auth_logout"}
+```
+
+Cualquier `user_id`, `userId` o identidad adicional del cliente se descarta. La
+sesión autenticada es la única fuente de identidad.
+
+Las respuestas operativas son `assistant_status`, `ui`, `overview_update`,
+`notification`, `transcription`, `rating_saved` y `error`. Los errores incluyen
+`code`, `message` y `recoverable`.
+
+`audio` y `data` se conservan como aliases compatibles de `audio_base64`, pero
+el último es el nombre canónico del contrato A2UI.
+
+### Confirmación de transferencias
+
+Una petición conversacional nunca mueve dinero. El primer turno genera
+`transfer_form` con un `request_id` aleatorio. Solo `confirm_transfer` con ese
+identificador puede invocar `createTransaction`.
+
+El servidor conserva una única transferencia pendiente por socket, la expira a
+los diez minutos, bloquea confirmaciones paralelas y recuerda requests ya
+completados. El mismo `request_id` también es la llave idempotente en MCP, por lo
+que un retry no duplica el cargo. Al completar:
+
+1. guarda `transfer_success` en `interactions`;
+2. añade su `interaction_id` al mensaje `ui`;
+3. actualiza overviews de emisor y receptor conectados;
+4. notifica al receptor.
+
+Toda respuesta `ui`, incluso cards de aclaración, se guarda con
+`saveInteraction` antes de enviarse.
+
+## Gemini y fallback
+
+Configura `GEMINI_API_KEY` o su alias compatible `LLM_API_KEY`. El SDK se carga de
+forma lazy y el modelo por defecto es `gemini-3.6-flash`, configurable con
+`GEMINI_MODEL`.
+
+Sin key o si Gemini falla, el fallback local sigue consultando MCP y cubre:
+
+- saldos y cuentas;
+- contactos;
+- reestructura, CAT e intereses;
+- transferencia coloquial con monto y alias;
+- datos faltantes mediante `clarification_card`;
+- opciones generales mediante `quick_actions`.
+
+El fallback no ejecuta mutaciones. Una frase como “confirmo” enviada como
+`user_message` pide usar el botón seguro; no transfiere.
+
+## Audio
+
+La transcripción usa audio inline de `@google/genai`. Requiere una API key aunque
+el chat de texto pueda operar en fallback. Por defecto acepta hasta 4 MiB de
+audio base64 en formatos AAC, FLAC, MP4, MPEG, OGG, WAV y WebM. Los límites y el
+modelo se ajustan con `MAX_AUDIO_BYTES` y `GEMINI_TRANSCRIPTION_MODEL`.
+
+`audio_stream` recibe un clip completo, no chunks incrementales.
+
+## Seguridad operativa
+
+- autenticación por socket y límite de intentos;
+- payload WebSocket máximo, audio validado y compresión desactivada;
+- aliases normalizados sin expresiones regulares dinámicas;
+- montos positivos, finitos, con máximo dos decimales;
+- ratings enteros de 1 a 10 y restringidos a interacciones de la sesión;
+- cola por socket, rate limit, heartbeat ping/pong y apagado limpio;
+- allowlist opcional de origins mediante `WS_ALLOWED_ORIGINS`.
+
+La contraseña maestra es adecuada solo para esta demo, no para producción.
+
+## Scripts
+
+```bash
+npm start       # servidor HTTP + WebSocket y subproceso MCP
+npm run dev     # reinicio automático de Node
+npm run seed    # reemplaza el seed en Atlas; en memoria solo valida el fixture
+npm test        # pruebas unitarias e integración MCP sin credenciales
+npm run test:mcp
+```
+
+Las pruebas fuerzan storage en memoria y no contactan MongoDB ni Gemini.

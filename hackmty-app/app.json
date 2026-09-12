@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "Banorte A2UI",
+    "slug": "banorte-a2ui",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "banorte-a2ui",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "mx.banorte.hackmty.a2ui"
+    },
+    "android": {
+      "package": "mx.banorte.hackmty.a2ui",
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Permite que Banorte escuche tu solicitud para convertirla en texto."
+        }
+      ],
+      "expo-font",
+      "expo-asset"
+    ]
+  }
+}

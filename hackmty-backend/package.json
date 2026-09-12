@@ -1,16 +1,26 @@
 {
   "name": "hackmty-backend",
   "version": "1.0.0",
-  "description": "Backend del reto Banorte x Tec — conexión a MongoDB Atlas y tools base para el servidor MCP.",
+  "description": "Backend A2UI para la demo Banorte: Express, WebSocket, MCP y MongoDB.",
   "main": "server.js",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
+    "dev": "node --watch server.js",
     "seed": "node seed.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test test/*.test.js",
+    "test:mcp": "node --test test/mcp.integration.test.js"
   },
   "dependencies": {
     "@google/genai": "^2.0.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "dotenv": "^16.4.5",
+    "express": "^5.2.1",
     "mongodb": "^6.9.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "zod": "^3.25.76"
   }
 }
