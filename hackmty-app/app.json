@@ -1,27 +1,34 @@
 {
   "expo": {
-    "name": "Banorte A2UI",
-    "slug": "banorte-a2ui",
+    "name": "Banorte Inteligente",
+    "slug": "banorte-inteligente",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "scheme": "banorte-a2ui",
+    "scheme": "banorte-inteligente",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "mx.banorte.hackmty.a2ui"
+      "bundleIdentifier": "mx.banorte.hackmty.inteligente"
     },
     "android": {
-      "package": "mx.banorte.hackmty.a2ui",
-      "predictiveBackGestureEnabled": false
+      "package": "mx.banorte.hackmty.inteligente",
+      "predictiveBackGestureEnabled": false,
+      "softwareKeyboardLayoutMode": "pan"
     },
     "web": {
       "bundler": "metro"
     },
     "plugins": [
       [
-        "expo-audio",
+        "expo-speech-recognition",
         {
-          "microphonePermission": "Permite que Banorte escuche tu solicitud para convertirla en texto."
+          "microphonePermission": "Permite que Banorte escuche tu solicitud para convertirla en texto.",
+          "speechRecognitionPermission": "Permite que Banorte convierta tu voz en texto.",
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox",
+            "com.google.android.as",
+            "com.google.android.tts"
+          ]
         }
       ],
       "expo-font",

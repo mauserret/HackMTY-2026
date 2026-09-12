@@ -3,9 +3,16 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import Svg, {
+  Circle,
+  G,
+  Line,
+  Polyline,
+} from "react-native-svg";
 
 import StarRating from "./StarRating";
 import {
@@ -33,9 +40,9 @@ export default function DynamicUI({
 
   if (message.type === "text") {
     return (
-      <A2UICard icon="chatbubble-ellipses-outline" title="Asistente Banorte">
+      <GeneratedCard icon="chatbubble-ellipses-outline" title="Asistente Banorte">
         <Text style={styles.body}>{message.text}</Text>
-      </A2UICard>
+      </GeneratedCard>
     );
   }
 
@@ -75,6 +82,18 @@ export default function DynamicUI({
       return <TransferSuccess data={data} rating={rating} />;
     case "credit_plan_table":
       return <CreditPlanTable data={data} rating={rating} />;
+    case "financial_chart":
+      return <FinancialChart data={data} rating={rating} />;
+    case "transactions_summary":
+      return (
+        <TransactionsSummary
+          data={data}
+          onSendMessage={onSendMessage}
+          rating={rating}
+        />
+      );
+    case "transaction_detail":
+      return <TransactionDetail data={data} rating={rating} />;
     case "clarification_card":
       return (
         <ClarificationCard
@@ -101,7 +120,7 @@ export default function DynamicUI({
   }
 }
 
-function A2UICard({
+function GeneratedCard({
   icon,
   eyebrow = "INTERFAZ GENERADA",
   title,
@@ -139,7 +158,7 @@ function BalanceCard({ data, rating }) {
   const ownerName = data.name || data.user?.name;
 
   return (
-    <A2UICard
+    <GeneratedCard
       icon="wallet-outline"
       title={
         ownerName ? `Saldos de ${ownerName.split(" ")[0]}` : "Tus saldos"
@@ -174,14 +193,242 @@ function BalanceCard({ data, rating }) {
         </View>
       )}
       {rating}
-    </A2UICard>
+    </GeneratedCard>
+  );
+}
+
+function FinancialChart({ data, rating }) {
+  const series = Array.isArray(data.data)
+    ? data.data
+    : Array.isArray(data.series)
+      ? data.series
+      : [];
+  const maxValue = Math.max(
+    ...series.map((item) => Number(item.value) || 0),
+    1,
+  );
+  const chartType = ["bar", "pie", "line"].includes(data.chartType)
+    ? data.chartType
+    : "bar";
+
+  return (
+    <GeneratedCard
+      icon="bar-chart-outline"
+      title={data.title || "Actividad financiera"}
+      eyebrow="ANÁLISIS GENERADO"
+    >
+      {data.message ? <Text style={styles.body}>{data.message}</Text> : null}
+      <View style={styles.chart}>
+        {chartType === "pie" ? (
+          <PieChart series={series} currency={data.currency} />
+        ) : chartType === "line" ? (
+          <LineChart
+            series={series}
+            maxValue={maxValue}
+            currency={data.currency}
+          />
+        ) : (
+          <BarChart
+            series={series}
+            maxValue={maxValue}
+            currency={data.currency}
+          />
+        )}
+      </View>
+      {rating}
+    </GeneratedCard>
+  );
+}
+
+const CHART_COLORS = [
+  colors.red,
+  colors.charcoal,
+  colors.success,
+  colors.warning,
+  "#547AA5",
+  "#8D6A9F",
+];
+
+function BarChart({ series, maxValue, currency }) {
+  return (
+    <View style={styles.barChart}>
+      {series.map((item, index) => {
+        const value = Number(item.value) || 0;
+        const height = value ? Math.max(8, (value / maxValue) * 105) : 2;
+        return (
+          <View key={`${item.label}-${index}`} style={styles.barColumn}>
+            <Text style={styles.barValue} numberOfLines={1}>
+              {formatMoney(value, currency)}
+            </Text>
+            <View style={styles.barTrack}>
+              <View
+                style={[
+                  styles.verticalBar,
+                  {
+                    height,
+                    backgroundColor: CHART_COLORS[index % CHART_COLORS.length],
+                  },
+                ]}
+              />
+            </View>
+            <Text style={styles.barLabel} numberOfLines={1}>
+              {item.label}
+            </Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function PieChart({ series, currency }) {
+  const total = series.reduce(
+    (sum, item) => sum + (Number(item.value) || 0),
+    0,
+  );
+  const circumference = 2 * Math.PI * 44;
+  let consumed = 0;
+  return (
+    <View style={styles.pieLayout}>
+      <View style={styles.pieShell}>
+        <Svg width="150" height="150" viewBox="0 0 120 120">
+          <G rotation="-90" origin="60, 60">
+            <Circle
+              cx="60"
+              cy="60"
+              r="44"
+              fill="none"
+              stroke={colors.canvasStrong}
+              strokeWidth="18"
+            />
+            {series.map((item, index) => {
+              const fraction = total ? (Number(item.value) || 0) / total : 0;
+              const dash = fraction * circumference;
+              const offset = consumed * circumference;
+              consumed += fraction;
+              return (
+                <Circle
+                  key={`${item.label}-${index}`}
+                  cx="60"
+                  cy="60"
+                  r="44"
+                  fill="none"
+                  stroke={CHART_COLORS[index % CHART_COLORS.length]}
+                  strokeWidth="18"
+                  strokeDasharray={`${dash} ${circumference - dash}`}
+                  strokeDashoffset={-offset}
+                />
+              );
+            })}
+          </G>
+        </Svg>
+        <View style={styles.pieCenter}>
+          <Text style={styles.pieTotalLabel}>TOTAL</Text>
+          <Text style={styles.pieTotal} adjustsFontSizeToFit numberOfLines={1}>
+            {formatMoney(total, currency)}
+          </Text>
+        </View>
+      </View>
+      <View style={styles.pieLegend}>
+        {series.map((item, index) => (
+          <View key={`${item.label}-${index}`} style={styles.legendRow}>
+            <View
+              style={[
+                styles.legendDot,
+                {
+                  backgroundColor:
+                    CHART_COLORS[index % CHART_COLORS.length],
+                },
+              ]}
+            />
+            <View style={styles.detailCopy}>
+              <Text style={styles.legendLabel}>{item.label}</Text>
+              <Text style={styles.legendValue}>
+                {formatMoney(item.value, currency)}
+              </Text>
+            </View>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function LineChart({ series, maxValue, currency }) {
+  const width = 300;
+  const height = 145;
+  const left = 18;
+  const right = 12;
+  const top = 15;
+  const bottom = 27;
+  const points = series.map((item, index) => {
+    const x =
+      left +
+      (series.length <= 1
+        ? (width - left - right) / 2
+        : (index * (width - left - right)) / (series.length - 1));
+    const y =
+      height -
+      bottom -
+      ((Number(item.value) || 0) / maxValue) *
+        (height - top - bottom);
+    return { x, y, item };
+  });
+
+  return (
+    <View>
+      <Svg width="100%" height="160" viewBox={`0 0 ${width} ${height}`}>
+        {[0, 0.5, 1].map((ratio) => {
+          const y = top + ratio * (height - top - bottom);
+          return (
+            <Line
+              key={ratio}
+              x1={left}
+              y1={y}
+              x2={width - right}
+              y2={y}
+              stroke={colors.border}
+              strokeWidth="1"
+            />
+          );
+        })}
+        <Polyline
+          points={points.map(({ x, y }) => `${x},${y}`).join(" ")}
+          fill="none"
+          stroke={colors.red}
+          strokeWidth="3"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+        {points.map(({ x, y, item }, index) => (
+          <Circle
+            key={`${item.label}-${index}`}
+            cx={x}
+            cy={y}
+            r="4.5"
+            fill={colors.surface}
+            stroke={colors.red}
+            strokeWidth="3"
+          />
+        ))}
+      </Svg>
+      <View style={styles.lineFooter}>
+        <Text style={styles.lineLabel}>{series[0]?.label || ""}</Text>
+        <Text style={styles.lineTotal}>
+          {formatMoney(series.at(-1)?.value || 0, currency)}
+        </Text>
+        <Text style={[styles.lineLabel, styles.lineLabelRight]}>
+          {series.at(-1)?.label || ""}
+        </Text>
+      </View>
+    </View>
   );
 }
 
 function ContactsList({ data, onSendMessage, rating }) {
   const contacts = Array.isArray(data) ? data : data.contacts || [];
   return (
-    <A2UICard
+    <GeneratedCard
       icon="people-outline"
       title="¿A quién le enviamos?"
       eyebrow={`${contacts.length} CONTACTOS DISPONIBLES`}
@@ -225,45 +472,282 @@ function ContactsList({ data, onSendMessage, rating }) {
         })}
       </View>
       {rating}
-    </A2UICard>
+    </GeneratedCard>
+  );
+}
+
+function normalizeComparable(value) {
+  return String(value || "")
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase("es-MX");
+}
+
+function parseEditableAmount(value) {
+  let clean = String(value || "")
+    .replace(/[^\d.,]/g, "")
+    .trim();
+  if (!clean) return null;
+  const comma = clean.lastIndexOf(",");
+  const dot = clean.lastIndexOf(".");
+  if (comma >= 0 && dot >= 0) {
+    const decimal = comma > dot ? "," : ".";
+    const thousands = decimal === "," ? "." : ",";
+    clean = clean.replaceAll(thousands, "").replace(decimal, ".");
+  } else {
+    const separator = comma >= 0 ? "," : dot >= 0 ? "." : null;
+    if (separator) {
+      const parts = clean.split(separator);
+      const fraction = parts.at(-1);
+      clean =
+        parts.length === 2 && fraction.length <= 2
+          ? `${parts[0]}.${fraction}`
+          : parts.join("");
+    }
+  }
+  const amount = Number(clean);
+  return Number.isFinite(amount) && amount > 0
+    ? Math.round(amount * 100) / 100
+    : null;
+}
+
+function matchContact(recipient, contacts) {
+  const target = normalizeComparable(recipient);
+  if (!target) return null;
+  return (
+    contacts.find((contact) =>
+      [
+        contact.alias,
+        contact.display_name,
+        contact.fullName,
+        contact.display_name?.split(/\s+/)[0],
+        contact.fullName?.split(/\s+/)[0],
+        contact.accountNumber,
+      ]
+        .filter(Boolean)
+        .some((value) => normalizeComparable(value) === target),
+    ) || null
   );
 }
 
 function TransferForm({ data, onConfirm, rating }) {
+  const initial = data.initialValues || {};
+  const contacts = data.available_contacts || [];
   const [status, setStatus] = useState("ready");
-  const recipient =
-    data.recipient_name ||
-    data.suggested_contact ||
-    data.to_alias ||
-    data.recipient ||
-    data.alias ||
-    "contacto";
-  const amount = Number(data.amount) || 0;
+  const [recipient, setRecipient] = useState(
+    String(
+      initial.recipient ??
+        data.recipient_name ??
+        data.to_alias ??
+        "",
+    ),
+  );
+  const [amountText, setAmountText] = useState(
+    String(initial.amount ?? data.amount ?? ""),
+  );
+  const [concept, setConcept] = useState(
+    String(initial.concept ?? data.concept ?? ""),
+  );
+  const [validationError, setValidationError] = useState("");
+  const amount = parseEditableAmount(amountText);
+  const selectedContact = matchContact(recipient, contacts);
+  const keepsInitialContact =
+    normalizeComparable(recipient) ===
+    normalizeComparable(initial.recipient || data.recipient_name);
+  const accountNumber =
+    selectedContact?.accountNumber ||
+    selectedContact?.account_number ||
+    (keepsInitialContact
+      ? initial.accountNumber || data.account_number
+      : "") ||
+    "";
+  const bank =
+    selectedContact?.bank ||
+    (keepsInitialContact ? initial.bank || data.bank : "") ||
+    "";
+  const canSubmit =
+    status === "ready" && Boolean(recipient.trim()) && Boolean(amount);
 
   const handleConfirm = () => {
     if (status !== "ready") return;
-    const sent = onConfirm(data);
-    if (sent !== false) setStatus("pending");
+    if (!recipient.trim() || !amount) {
+      setValidationError("Completa la persona y escribe un monto válido.");
+      return;
+    }
+    const contact = matchContact(recipient, contacts);
+    const sent = onConfirm({
+      ...data,
+      contact_id: contact?.contact_id || contact?.id || "",
+      to_alias: contact?.alias || recipient.trim(),
+      recipient_name:
+        contact?.fullName || contact?.display_name || recipient.trim(),
+      account_number:
+        contact?.accountNumber || contact?.account_number || "",
+      bank: contact?.bank || "",
+      amount,
+      concept: concept.trim(),
+      initialValues: {
+        recipient:
+          contact?.fullName || contact?.display_name || recipient.trim(),
+        amount: String(amount),
+        concept: concept.trim(),
+        accountNumber:
+          contact?.accountNumber || contact?.account_number || "",
+        bank: contact?.bank || "",
+      },
+    });
+    if (sent !== false) {
+      setValidationError("");
+      setStatus("pending");
+    }
   };
 
   return (
-    <A2UICard
+    <GeneratedCard
       icon="paper-plane-outline"
-      title="Confirma tu transferencia"
-      eyebrow="REVISIÓN OBLIGATORIA"
+      title={data.title || "Revisa tu transferencia"}
+      eyebrow="FORMULARIO INTERACTIVO"
     >
-      <View style={styles.transferAmountBlock}>
-        <Text style={styles.metricLabel}>Vas a enviar</Text>
-        <Text style={styles.transferAmount}>{formatMoney(amount)}</Text>
-        <View style={styles.recipientPill}>
-          <View style={styles.smallAvatar}>
-            <Text style={styles.smallAvatarText}>
-              {recipient.slice(0, 1).toUpperCase()}
-            </Text>
+      <View style={styles.extractionNote}>
+        <Ionicons name="sparkles-outline" size={17} color={colors.red} />
+        <Text style={styles.extractionText}>
+          Precargamos lo que entendimos. Puedes corregir cualquier campo.
+        </Text>
+      </View>
+
+      <View style={styles.formField}>
+        <View style={styles.formLabelRow}>
+          <Text style={styles.formLabel}>Persona</Text>
+          {initial.recipient ? (
+            <Text style={styles.detectedLabel}>DETECTADO</Text>
+          ) : null}
+        </View>
+        <View style={styles.formInputShell}>
+          <Ionicons name="person-outline" size={18} color={colors.slate} />
+          <TextInput
+            value={recipient}
+            onChangeText={(value) => {
+              setRecipient(value);
+              setValidationError("");
+            }}
+            editable={status === "ready"}
+            placeholder="Nombre o alias"
+            placeholderTextColor={colors.muted}
+            autoCapitalize="words"
+            maxLength={64}
+            style={styles.formInput}
+            accessibilityLabel="Persona destinataria"
+          />
+        </View>
+        {contacts.length ? (
+          <View style={styles.contactSuggestions}>
+            {contacts.map((contact) => (
+              <Pressable
+                key={contact.alias}
+                accessibilityRole="button"
+                accessibilityLabel={`Seleccionar a ${contact.display_name}`}
+                disabled={status !== "ready"}
+                onPress={() => {
+                  setRecipient(
+                    contact.fullName || contact.display_name,
+                  );
+                  setValidationError("");
+                }}
+                style={({ pressed }) => [
+                  styles.contactSuggestion,
+                  matchContact(recipient, [contact]) &&
+                    styles.contactSuggestionSelected,
+                  pressed && styles.rowPressed,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.contactSuggestionText,
+                    matchContact(recipient, [contact]) &&
+                      styles.contactSuggestionTextSelected,
+                  ]}
+                >
+                  {(contact.fullName || contact.display_name).split(/\s+/)[0]}
+                </Text>
+              </Pressable>
+            ))}
           </View>
-          <Text style={styles.recipientText}>a {recipient}</Text>
+        ) : null}
+      </View>
+
+      <View style={styles.canonicalAccount}>
+        <View style={styles.canonicalAccountIcon}>
+          <Ionicons name="business-outline" size={17} color={colors.slate} />
+        </View>
+        <View style={styles.detailCopy}>
+          <Text style={styles.canonicalAccountLabel}>CUENTA VALIDADA</Text>
+          <Text style={styles.canonicalAccountValue}>
+            {accountNumber || "Selecciona un contacto guardado"}
+          </Text>
+        </View>
+        {bank ? <Text style={styles.bankLabel}>{bank}</Text> : null}
+      </View>
+
+      <View style={styles.formField}>
+        <View style={styles.formLabelRow}>
+          <Text style={styles.formLabel}>Monto</Text>
+          {initial.amount !== "" && initial.amount !== undefined ? (
+            <Text style={styles.detectedLabel}>DETECTADO</Text>
+          ) : null}
+        </View>
+        <View style={styles.formInputShell}>
+          <Text style={styles.currencyPrefix}>$</Text>
+          <TextInput
+            value={amountText}
+            onChangeText={(value) => {
+              setAmountText(value);
+              setValidationError("");
+            }}
+            editable={status === "ready"}
+            placeholder="0.00"
+            placeholderTextColor={colors.muted}
+            keyboardType="decimal-pad"
+            maxLength={18}
+            style={styles.formInput}
+            accessibilityLabel="Monto de la transferencia"
+          />
+          <Text style={styles.currencySuffix}>MXN</Text>
         </View>
       </View>
+
+      <View style={styles.formField}>
+        <View style={styles.formLabelRow}>
+          <Text style={styles.formLabel}>Concepto</Text>
+          <Text style={styles.optionalLabel}>
+            {initial.concept ? "DETECTADO" : "OPCIONAL"}
+          </Text>
+        </View>
+        <View style={styles.formInputShell}>
+          <Ionicons
+            name="document-text-outline"
+            size={18}
+            color={colors.slate}
+          />
+          <TextInput
+            value={concept}
+            onChangeText={setConcept}
+            editable={status === "ready"}
+            placeholder="Ej. Cena"
+            placeholderTextColor={colors.muted}
+            maxLength={120}
+            style={styles.formInput}
+            accessibilityLabel="Concepto de la transferencia"
+          />
+        </View>
+      </View>
+
+      {validationError ? (
+        <Text style={styles.formError} accessibilityRole="alert">
+          {validationError}
+        </Text>
+      ) : null}
 
       <View style={styles.securityNote}>
         <Ionicons
@@ -272,17 +756,17 @@ function TransferForm({ data, onConfirm, rating }) {
           color={colors.success}
         />
         <Text style={styles.securityText}>
-          El dinero no se moverá hasta que confirmes esta operación.
+          El dinero no se moverá hasta que confirmes estos datos.
         </Text>
       </View>
 
       <Pressable
         accessibilityRole="button"
-        disabled={status !== "ready" || !amount}
+        disabled={!canSubmit}
         onPress={handleConfirm}
         style={({ pressed }) => [
           styles.primaryButton,
-          (status !== "ready" || !amount) && styles.disabledButton,
+          !canSubmit && styles.disabledButton,
           pressed && styles.primaryPressed,
         ]}
       >
@@ -299,13 +783,15 @@ function TransferForm({ data, onConfirm, rating }) {
               color={colors.surface}
             />
             <Text style={styles.primaryButtonText}>
-              Confirmar {formatMoney(amount)}
+              {amount
+                ? `Confirmar ${formatMoney(amount)}`
+                : "Confirmar transferencia"}
             </Text>
           </>
         )}
       </Pressable>
       {rating}
-    </A2UICard>
+    </GeneratedCard>
   );
 }
 
@@ -341,10 +827,179 @@ function TransferSuccess({ data, rating }) {
             value={String(transactionId).slice(-12).toUpperCase()}
           />
         ) : null}
+        {data.concept ? (
+          <ReceiptRow label="Concepto" value={data.concept} />
+        ) : null}
         <ReceiptRow label="Estado" value="Completada" success />
       </View>
       {rating}
     </View>
+  );
+}
+
+function TransactionsSummary({ data, onSendMessage, rating }) {
+  const groups = data.groups || [];
+  const totals = data.totals || {};
+  return (
+    <GeneratedCard
+      icon="receipt-outline"
+      title={data.title || "Resumen de operaciones"}
+      eyebrow="HISTORIAL FINANCIERO"
+    >
+      <View style={styles.summaryTotals}>
+        <View style={styles.summaryMetric}>
+          <Text style={styles.summaryMetricLabel}>ENTRADAS</Text>
+          <Text style={[styles.summaryMetricValue, styles.incomingText]}>
+            {formatMoney(totals.incoming)}
+          </Text>
+        </View>
+        <View style={styles.summaryDivider} />
+        <View style={styles.summaryMetric}>
+          <Text style={styles.summaryMetricLabel}>SALIDAS</Text>
+          <Text style={[styles.summaryMetricValue, styles.outgoingText]}>
+            {formatMoney(totals.outgoing)}
+          </Text>
+        </View>
+      </View>
+
+      {groups.length ? (
+        groups.map((group) => (
+          <View key={group.date} style={styles.transactionGroup}>
+            <Text style={styles.transactionDate}>
+              {formatDate(`${group.date}T12:00:00`)}
+            </Text>
+            {group.transactions.map((transaction) => {
+              const incoming = transaction.direction === "incoming";
+              const counterparty = incoming
+                ? transaction.sender
+                : transaction.recipient;
+              return (
+                <Pressable
+                  key={transaction.transactionId}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Ver detalle de ${counterparty}`}
+                  onPress={() =>
+                    onSendMessage(
+                      `Detalle de la operación ${transaction.transactionId}`,
+                    )
+                  }
+                  style={({ pressed }) => [
+                    styles.transactionRow,
+                    pressed && styles.rowPressed,
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.transactionIcon,
+                      incoming
+                        ? styles.transactionIconIncoming
+                        : styles.transactionIconOutgoing,
+                    ]}
+                  >
+                    <Ionicons
+                      name={incoming ? "arrow-down" : "arrow-up"}
+                      size={16}
+                      color={incoming ? colors.success : colors.red}
+                    />
+                  </View>
+                  <View style={styles.detailCopy}>
+                    <Text style={styles.transactionName}>{counterparty}</Text>
+                    <Text style={styles.transactionConcept}>
+                      {transaction.concept || transaction.category}
+                    </Text>
+                  </View>
+                  <View style={styles.transactionAmountBlock}>
+                    <Text
+                      style={[
+                        styles.transactionAmount,
+                        incoming && styles.incomingText,
+                      ]}
+                    >
+                      {incoming ? "+" : "−"}
+                      {formatMoney(transaction.amount)}
+                    </Text>
+                    <Ionicons
+                      name="chevron-forward"
+                      size={14}
+                      color={colors.disabled}
+                    />
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+        ))
+      ) : (
+        <Text style={styles.emptySummary}>
+          {data.empty_message || "No hay operaciones para mostrar."}
+        </Text>
+      )}
+      {rating}
+    </GeneratedCard>
+  );
+}
+
+function TransactionDetail({ data, rating }) {
+  const transaction = data.transaction || data;
+  const incoming = transaction.direction === "incoming";
+  return (
+    <GeneratedCard
+      icon="document-text-outline"
+      title={data.title || "Detalle de operación"}
+      eyebrow="COMPROBANTE"
+      accent={incoming ? colors.success : colors.red}
+    >
+      <View style={styles.detailHero}>
+        <Text style={styles.metricLabel}>
+          {incoming ? "TRANSFERENCIA RECIBIDA" : "TRANSFERENCIA ENVIADA"}
+        </Text>
+        <Text style={styles.detailHeroAmount}>
+          {formatMoney(transaction.amount, transaction.currency)}
+        </Text>
+        <Text style={styles.detailHeroPerson}>
+          {incoming
+            ? `De ${transaction.sender}`
+            : `A ${transaction.recipient}`}
+        </Text>
+      </View>
+      <View style={styles.receipt}>
+        <ReceiptRow
+          label="Fecha"
+          value={formatDate(transaction.timestamp)}
+        />
+        <ReceiptRow
+          label="Concepto"
+          value={transaction.concept || "Sin concepto"}
+        />
+        <ReceiptRow
+          label="Categoría"
+          value={transaction.category || "Transferencias"}
+        />
+        {transaction.accountNumber ? (
+          <ReceiptRow
+            label="Cuenta"
+            value={`•••• ${transaction.accountNumber.slice(-4)}`}
+          />
+        ) : null}
+        {transaction.bank ? (
+          <ReceiptRow label="Banco" value={transaction.bank} />
+        ) : null}
+        <ReceiptRow
+          label="Folio"
+          value={String(transaction.transactionId || "").toUpperCase()}
+        />
+        <ReceiptRow
+          label="Estado"
+          value={
+            transaction.status === "completed"
+              ? "Completada"
+              : transaction.status
+          }
+          success={transaction.status === "completed"}
+        />
+      </View>
+      {rating}
+    </GeneratedCard>
   );
 }
 
@@ -371,7 +1026,7 @@ function CreditPlanTable({ data, rating }) {
     data.total_debt ?? data.balance ?? data.current_balance;
 
   return (
-    <A2UICard
+    <GeneratedCard
       icon="trending-down-outline"
       title="Opciones para pagar mejor"
       eyebrow="COMPARATIVA PERSONALIZADA"
@@ -449,7 +1104,7 @@ function CreditPlanTable({ data, rating }) {
         </View>
       )}
       {rating}
-    </A2UICard>
+    </GeneratedCard>
   );
 }
 
@@ -457,7 +1112,7 @@ function ClarificationCard({ data, onSendMessage, rating }) {
   const choices =
     data.choices || data.options || data.quick_actions || [];
   return (
-    <A2UICard
+    <GeneratedCard
       icon="help-circle-outline"
       title={data.title || "Solo necesito un dato más"}
       eyebrow="CONFIRMEMOS CONTIGO"
@@ -499,7 +1154,7 @@ function ClarificationCard({ data, onSendMessage, rating }) {
         </View>
       )}
       {rating}
-    </A2UICard>
+    </GeneratedCard>
   );
 }
 
@@ -520,11 +1175,21 @@ function QuickActions({ data, onSendMessage, rating }) {
       prompt: "Quiero pagar menos intereses de mi tarjeta",
       icon: "trending-down-outline",
     },
+    {
+      label: "Ver gráfica de movimientos",
+      prompt: "Muéstrame una gráfica de mis movimientos",
+      icon: "bar-chart-outline",
+    },
+    {
+      label: "Resumen de operaciones",
+      prompt: "Muéstrame el resumen de transferencias",
+      icon: "receipt-outline",
+    },
   ];
   const actions = data.actions?.length ? data.actions : defaultActions;
 
   return (
-    <A2UICard
+    <GeneratedCard
       icon="sparkles-outline"
       title={data.title || "¿Qué quieres resolver hoy?"}
       eyebrow="ATAJOS INTELIGENTES"
@@ -566,7 +1231,7 @@ function QuickActions({ data, onSendMessage, rating }) {
         })}
       </View>
       {rating}
-    </A2UICard>
+    </GeneratedCard>
   );
 }
 
@@ -695,6 +1360,158 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
   },
+  chart: {
+    marginTop: spacing.md,
+    gap: spacing.md,
+  },
+  chartRow: {
+    width: "100%",
+  },
+  chartLabels: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  chartLabel: {
+    color: colors.slate,
+    fontFamily,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  chartValue: {
+    fontFamily,
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  chartTrack: {
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.canvasStrong,
+    overflow: "hidden",
+  },
+  chartBar: {
+    height: "100%",
+    borderRadius: 5,
+  },
+  barChart: {
+    minHeight: 160,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 5,
+  },
+  barColumn: {
+    flex: 1,
+    minWidth: 18,
+    alignItems: "center",
+  },
+  barValue: {
+    width: "100%",
+    color: colors.slate,
+    fontFamily,
+    fontSize: 7,
+    fontWeight: "700",
+    textAlign: "center",
+    marginBottom: 4,
+  },
+  barTrack: {
+    height: 105,
+    width: "70%",
+    borderRadius: 5,
+    backgroundColor: colors.canvasStrong,
+    justifyContent: "flex-end",
+    overflow: "hidden",
+  },
+  verticalBar: {
+    width: "100%",
+    borderRadius: 5,
+  },
+  barLabel: {
+    width: "100%",
+    color: colors.muted,
+    fontFamily,
+    fontSize: 7,
+    textAlign: "center",
+    marginTop: 5,
+  },
+  pieLayout: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  pieShell: {
+    width: 150,
+    height: 150,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pieCenter: {
+    position: "absolute",
+    width: 80,
+    alignItems: "center",
+  },
+  pieTotalLabel: {
+    color: colors.muted,
+    fontFamily,
+    fontSize: 7,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+  },
+  pieTotal: {
+    width: 78,
+    color: colors.charcoal,
+    fontFamily,
+    fontSize: 13,
+    fontWeight: "800",
+    textAlign: "center",
+    marginTop: 2,
+  },
+  pieLegend: {
+    flex: 1,
+    gap: 7,
+  },
+  legendRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  legendDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    marginRight: 7,
+  },
+  legendLabel: {
+    color: colors.charcoal,
+    fontFamily,
+    fontSize: 9,
+    fontWeight: "700",
+  },
+  legendValue: {
+    color: colors.muted,
+    fontFamily,
+    fontSize: 8,
+    marginTop: 1,
+  },
+  lineFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: -18,
+    paddingHorizontal: 17,
+  },
+  lineLabel: {
+    flex: 1,
+    color: colors.muted,
+    fontFamily,
+    fontSize: 8,
+  },
+  lineLabelRight: {
+    textAlign: "right",
+  },
+  lineTotal: {
+    color: colors.red,
+    fontFamily,
+    fontSize: 10,
+    fontWeight: "800",
+  },
   contactList: {
     borderTopWidth: 1,
     borderTopColor: colors.border,
@@ -733,52 +1550,157 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
   },
-  transferAmountBlock: {
-    alignItems: "center",
-    backgroundColor: colors.canvas,
-    borderRadius: 12,
-    paddingVertical: spacing.lg,
-    paddingHorizontal: spacing.md,
-  },
-  transferAmount: {
-    color: colors.charcoal,
-    fontFamily,
-    fontSize: 34,
-    fontWeight: "700",
-    marginTop: 4,
-  },
-  recipientPill: {
+  extractionNote: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: colors.surface,
-    borderRadius: radii.pill,
-    paddingVertical: 5,
-    paddingLeft: 5,
-    paddingRight: 12,
-    marginTop: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
+    backgroundColor: colors.errorSoft,
+    borderRadius: 10,
+    padding: spacing.sm,
+    marginBottom: spacing.md,
   },
-  smallAvatar: {
-    width: 25,
-    height: 25,
-    borderRadius: 13,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.charcoal,
-    marginRight: 7,
-  },
-  smallAvatarText: {
-    color: colors.surface,
+  extractionText: {
+    flex: 1,
+    color: colors.slate,
     fontFamily,
     fontSize: 10,
-    fontWeight: "800",
+    lineHeight: 15,
+    marginLeft: 7,
   },
-  recipientText: {
+  formField: {
+    marginBottom: spacing.md,
+  },
+  formLabelRow: {
+    minHeight: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  formLabel: {
     color: colors.charcoal,
     fontFamily,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "700",
+  },
+  detectedLabel: {
+    color: colors.red,
+    fontFamily,
+    fontSize: 8,
+    fontWeight: "800",
+    letterSpacing: 0.7,
+  },
+  optionalLabel: {
+    color: colors.muted,
+    fontFamily,
+    fontSize: 8,
+    fontWeight: "700",
+    letterSpacing: 0.7,
+  },
+  formInputShell: {
+    minHeight: 48,
+    borderRadius: radii.input,
+    borderWidth: 1,
+    borderColor: colors.canvasStrong,
+    backgroundColor: colors.canvas,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+  },
+  formInput: {
+    flex: 1,
+    color: colors.charcoal,
+    fontFamily,
+    fontSize: 14,
+    fontWeight: "600",
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 0,
+  },
+  currencyPrefix: {
+    color: colors.charcoal,
+    fontFamily,
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  currencySuffix: {
+    color: colors.muted,
+    fontFamily,
+    fontSize: 9,
+    fontWeight: "800",
+  },
+  contactSuggestions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 7,
+  },
+  contactSuggestion: {
+    minHeight: 28,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingHorizontal: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  contactSuggestionSelected: {
+    borderColor: colors.red,
+    backgroundColor: colors.errorSoft,
+  },
+  contactSuggestionText: {
+    color: colors.slate,
+    fontFamily,
+    fontSize: 9,
+    fontWeight: "700",
+  },
+  contactSuggestionTextSelected: {
+    color: colors.red,
+  },
+  canonicalAccount: {
+    minHeight: 53,
+    borderRadius: 10,
+    backgroundColor: colors.infoSoft,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.sm,
+    marginTop: -5,
+    marginBottom: spacing.md,
+  },
+  canonicalAccountIcon: {
+    width: 33,
+    height: 33,
+    borderRadius: 10,
+    backgroundColor: colors.surface,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: spacing.sm,
+  },
+  canonicalAccountLabel: {
+    color: colors.muted,
+    fontFamily,
+    fontSize: 8,
+    fontWeight: "800",
+    letterSpacing: 0.7,
+  },
+  canonicalAccountValue: {
+    color: colors.charcoal,
+    fontFamily,
+    fontSize: 10,
+    fontWeight: "700",
+    marginTop: 2,
+  },
+  bankLabel: {
+    color: colors.slate,
+    fontFamily,
+    fontSize: 9,
+    fontWeight: "700",
+  },
+  formError: {
+    color: colors.red,
+    fontFamily,
+    fontSize: 10,
+    lineHeight: 14,
+    marginTop: -5,
+    marginBottom: spacing.sm,
   },
   securityNote: {
     flexDirection: "row",
@@ -864,6 +1786,128 @@ const styles = StyleSheet.create({
     fontFamily,
     fontSize: 12,
     marginTop: 2,
+  },
+  summaryTotals: {
+    minHeight: 72,
+    borderRadius: 12,
+    backgroundColor: colors.canvas,
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: spacing.md,
+    paddingHorizontal: spacing.sm,
+  },
+  summaryMetric: {
+    flex: 1,
+    alignItems: "center",
+  },
+  summaryMetricLabel: {
+    color: colors.muted,
+    fontFamily,
+    fontSize: 8,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+  },
+  summaryMetricValue: {
+    color: colors.charcoal,
+    fontFamily,
+    fontSize: 15,
+    fontWeight: "800",
+    marginTop: 3,
+  },
+  summaryDivider: {
+    width: 1,
+    height: 35,
+    backgroundColor: colors.border,
+  },
+  incomingText: {
+    color: colors.success,
+  },
+  outgoingText: {
+    color: colors.red,
+  },
+  transactionGroup: {
+    marginBottom: spacing.md,
+  },
+  transactionDate: {
+    color: colors.muted,
+    fontFamily,
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+    marginBottom: 5,
+  },
+  transactionRow: {
+    minHeight: 58,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  transactionIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: spacing.sm,
+  },
+  transactionIconIncoming: {
+    backgroundColor: colors.successSoft,
+  },
+  transactionIconOutgoing: {
+    backgroundColor: colors.errorSoft,
+  },
+  transactionName: {
+    color: colors.charcoal,
+    fontFamily,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  transactionConcept: {
+    color: colors.muted,
+    fontFamily,
+    fontSize: 9,
+    marginTop: 2,
+  },
+  transactionAmountBlock: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+  },
+  transactionAmount: {
+    color: colors.charcoal,
+    fontFamily,
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  emptySummary: {
+    color: colors.slate,
+    fontFamily,
+    fontSize: 11,
+    lineHeight: 17,
+    textAlign: "center",
+    paddingVertical: spacing.lg,
+  },
+  detailHero: {
+    borderRadius: 12,
+    backgroundColor: colors.canvas,
+    alignItems: "center",
+    padding: spacing.lg,
+  },
+  detailHeroAmount: {
+    color: colors.charcoal,
+    fontFamily,
+    fontSize: 30,
+    fontWeight: "800",
+    marginTop: 4,
+  },
+  detailHeroPerson: {
+    color: colors.slate,
+    fontFamily,
+    fontSize: 11,
+    fontWeight: "600",
+    marginTop: 3,
   },
   receipt: {
     width: "100%",

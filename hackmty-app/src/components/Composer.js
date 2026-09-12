@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
-  ActivityIndicator,
+  Keyboard,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -9,12 +10,9 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import {
-  AudioModule,
-  RecordingPresets,
-  setAudioModeAsync,
-  useAudioRecorder,
-} from "expo-audio";
-import * as FileSystem from "expo-file-system/legacy";
+  SpeechRecognitionModule,
+  useSpeechRecognitionEvent,
+} from "../services/speechRecognition";
 
 import {
   colors,
@@ -24,119 +22,154 @@ import {
   spacing,
 } from "../theme";
 
-const MAX_RECORDING_MS = 15000;
+const ERROR_MESSAGES = {
+  "not-allowed": "Necesitamos permiso al micrófono para escuchar tu solicitud.",
+  "service-not-allowed":
+    "El reconocimiento de voz no está habilitado en este dispositivo.",
+  "language-not-supported":
+    "El dispositivo no tiene disponible el reconocimiento en español.",
+  network: "El servicio de voz de Google no tiene conexión.",
+  "no-speech": "No detectamos voz. Intenta hablar un poco más cerca.",
+  "speech-timeout": "No detectamos voz a tiempo. Intenta de nuevo.",
+  "audio-capture": "No fue posible acceder al micrófono.",
+  busy: "El reconocimiento de voz está ocupado. Espera un momento.",
+};
+
+function getGoogleRecognitionService() {
+  if (Platform.OS !== "android") return undefined;
+  const services =
+    SpeechRecognitionModule?.getSpeechRecognitionServices?.() || [];
+  return [
+    "com.google.android.googlequicksearchbox",
+    "com.google.android.as",
+    "com.google.android.tts",
+  ].find((service) => services.includes(service));
+}
 
 export default function Composer({
   onSend,
-  onSendAudio,
   disabled = false,
   assistantStatus,
+  bottomInset = 0,
 }) {
   const [text, setText] = useState("");
-  const [recording, setRecording] = useState(false);
-  const [recordingMs, setRecordingMs] = useState(0);
-  const [audioBusy, setAudioBusy] = useState(false);
+  const [recognizing, setRecognizing] = useState(false);
+  const [voiceDraft, setVoiceDraft] = useState(false);
   const [error, setError] = useState("");
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const startedAtRef = useRef(0);
-  const recordingRef = useRef(false);
-  const intervalRef = useRef(null);
-  const timeoutRef = useRef(null);
 
-  const clearTimers = () => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    intervalRef.current = null;
-    timeoutRef.current = null;
-  };
+  useSpeechRecognitionEvent("start", () => {
+    setRecognizing(true);
+    setError("");
+  });
+  useSpeechRecognitionEvent("end", () => setRecognizing(false));
+  useSpeechRecognitionEvent("result", (event) => {
+    const transcript = event.results[0]?.transcript?.trim();
+    if (transcript) {
+      setText(transcript);
+      setVoiceDraft(true);
+    }
+  });
+  useSpeechRecognitionEvent("error", (event) => {
+    setRecognizing(false);
+    if (event.error === "aborted") return;
+    setError(
+      ERROR_MESSAGES[event.error] ||
+        event.message ||
+        "No pudimos convertir tu voz en texto.",
+    );
+  });
 
   useEffect(
     () => () => {
-      clearTimers();
-      if (recordingRef.current) recorder.stop().catch(() => {});
+      try {
+        SpeechRecognitionModule?.abort();
+      } catch {
+        // El módulo puede no estar activo al desmontar el compositor.
+      }
     },
-    [recorder]
+    [],
   );
 
   const submitText = () => {
     const clean = text.trim();
     if (!clean || disabled) return;
-    if (onSend(clean) !== false) setText("");
-  };
-
-  const stopRecording = async () => {
-    if (!recordingRef.current || audioBusy) return;
-    clearTimers();
-    recordingRef.current = false;
-    setAudioBusy(true);
-    setError("");
-
-    try {
-      await recorder.stop();
-      const durationMs = Date.now() - startedAtRef.current;
-      const uri = recorder.uri;
-      setRecording(false);
-      setRecordingMs(durationMs);
-      await setAudioModeAsync({ allowsRecording: false });
-
-      if (!uri) throw new Error("No se generó el archivo de audio.");
-      const audioBase64 = await FileSystem.readAsStringAsync(uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      if (onSendAudio(audioBase64, "audio/mp4", durationMs) === false) {
-        throw new Error("No hay conexión con el servidor.");
-      }
-    } catch (recordingError) {
-      setRecording(false);
-      setError(
-        recordingError?.message ||
-          "No pudimos procesar la grabación. Intenta de nuevo."
-      );
-    } finally {
-      setAudioBusy(false);
+    if (
+      onSend(clean, { inputMode: voiceDraft ? "voice" : "text" }) !== false
+    ) {
+      setText("");
+      setVoiceDraft(false);
     }
   };
 
-  const startRecording = async () => {
-    if (disabled || audioBusy) return;
+  const startRecognition = async () => {
+    if (disabled) return;
+    Keyboard.dismiss();
     setError("");
     try {
+      if (!SpeechRecognitionModule) {
+        setError(
+          "Expo Go no incluye dictado nativo. Usa npx expo run:ios o npx expo run:android para habilitar el micrófono.",
+        );
+        return;
+      }
+      if (!SpeechRecognitionModule.isRecognitionAvailable()) {
+        setError(
+          "Este dispositivo no tiene un servicio de reconocimiento de voz disponible.",
+        );
+        return;
+      }
       const permission =
-        await AudioModule.requestRecordingPermissionsAsync();
+        await SpeechRecognitionModule.requestPermissionsAsync();
       if (!permission.granted) {
-        setError("Necesitamos permiso al micrófono para escuchar tu solicitud.");
+        setError(ERROR_MESSAGES["not-allowed"]);
         return;
       }
 
-      await setAudioModeAsync({
-        allowsRecording: true,
-        playsInSilentMode: true,
+      SpeechRecognitionModule.start({
+        lang: "es-MX",
+        interimResults: true,
+        continuous: false,
+        maxAlternatives: 1,
+        addsPunctuation: true,
+        requiresOnDeviceRecognition: false,
+        contextualStrings: [
+          "Banorte",
+          "saldo",
+          "transferencia",
+          "pesos",
+          "mensualidad",
+          "crédito",
+          "CAT",
+        ],
+        androidRecognitionServicePackage: getGoogleRecognitionService(),
       });
-      await recorder.prepareToRecordAsync();
-      recorder.record();
-
-      startedAtRef.current = Date.now();
-      recordingRef.current = true;
-      setRecordingMs(0);
-      setRecording(true);
-      intervalRef.current = setInterval(
-        () => setRecordingMs(Date.now() - startedAtRef.current),
-        250
-      );
-      timeoutRef.current = setTimeout(stopRecording, MAX_RECORDING_MS);
-    } catch (recordingError) {
+    } catch (recognitionError) {
+      setRecognizing(false);
       setError(
-        recordingError?.message ||
-          "No pudimos iniciar el micrófono. Revisa los permisos."
+        recognitionError?.message ||
+          "No pudimos iniciar el reconocimiento de voz.",
       );
     }
   };
 
-  const seconds = Math.max(0, Math.ceil(recordingMs / 1000));
+  const toggleRecognition = () => {
+    if (recognizing) {
+      SpeechRecognitionModule?.stop();
+    } else {
+      startRecognition();
+    }
+  };
+
   const hasText = Boolean(text.trim());
 
   return (
-    <View style={[styles.shell, shadow]}>
+    <View
+      style={[
+        styles.shell,
+        shadow,
+        { paddingBottom: Math.max(spacing.sm, bottomInset) },
+      ]}
+    >
       {assistantStatus ? (
         <View style={styles.statusRow}>
           <View style={styles.pulse} />
@@ -144,86 +177,95 @@ export default function Composer({
         </View>
       ) : null}
 
-      {recording ? (
-        <View style={styles.recordingRow}>
-          <View style={styles.recordingDot} />
-          <Text style={styles.recordingText}>Escuchando</Text>
-          <View style={styles.waveform}>
-            {[8, 15, 11, 19, 13, 7, 16].map((height, index) => (
-              <View
-                key={`${height}-${index}`}
-                style={[styles.waveBar, { height }]}
-              />
-            ))}
-          </View>
-          <Text style={styles.timer}>0:{String(seconds).padStart(2, "0")}</Text>
-        </View>
-      ) : (
+      <View style={styles.inputRow}>
         <TextInput
           value={text}
-          onChangeText={setText}
-          editable={!disabled && !audioBusy}
-          placeholder="Pide una transferencia, saldo o plan…"
-          placeholderTextColor={colors.muted}
+          onChangeText={(value) => {
+            setText(value);
+            setVoiceDraft(false);
+          }}
+          editable={!disabled}
+          placeholder={
+            recognizing
+              ? "Escuchando…"
+              : SpeechRecognitionModule
+                ? "Escribe o dicta tu solicitud…"
+                : "Escribe tu solicitud…"
+          }
+          placeholderTextColor={
+            recognizing ? colors.red : colors.muted
+          }
           multiline
           maxLength={500}
           returnKeyType="send"
           blurOnSubmit
           onSubmitEditing={submitText}
-          style={styles.input}
+          style={[styles.input, recognizing && styles.inputRecognizing]}
           accessibilityLabel="Escribe tu solicitud financiera"
         />
-      )}
 
-      <View style={styles.actions}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={
-            recording ? "Detener grabación" : "Grabar solicitud por voz"
+            recognizing
+              ? "Detener reconocimiento de voz"
+              : "Dictar solicitud con reconocimiento de Google"
           }
-          disabled={disabled || audioBusy}
-          onPress={recording ? stopRecording : startRecording}
+          disabled={disabled}
+          onPress={toggleRecognition}
           style={({ pressed }) => [
             styles.micButton,
-            recording && styles.micButtonActive,
-            pressed && styles.pressed,
-          ]}
-        >
-          {audioBusy ? (
-            <ActivityIndicator size="small" color={colors.red} />
-          ) : (
-            <Ionicons
-              name={recording ? "stop" : "mic-outline"}
-              size={21}
-              color={recording ? colors.surface : colors.charcoal}
-            />
-          )}
-        </Pressable>
-
-        <Text style={styles.modeHint}>
-          {recording ? "Toca para enviar" : "Texto o voz"}
-        </Text>
-
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Enviar solicitud"
-          disabled={!hasText || disabled || recording}
-          onPress={submitText}
-          style={({ pressed }) => [
-            styles.sendButton,
-            (!hasText || disabled || recording) && styles.sendDisabled,
+            recognizing && styles.micButtonActive,
             pressed && styles.pressed,
           ]}
         >
           <Ionicons
-            name="arrow-up"
+            name={recognizing ? "stop" : "mic-outline"}
             size={21}
-            color={colors.surface}
+            color={recognizing ? colors.surface : colors.charcoal}
           />
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Enviar solicitud"
+          disabled={!hasText || disabled || recognizing}
+          onPress={submitText}
+          style={({ pressed }) => [
+            styles.sendButton,
+            (!hasText || disabled || recognizing) && styles.sendDisabled,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Ionicons name="arrow-up" size={21} color={colors.surface} />
         </Pressable>
       </View>
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      <View style={styles.hintRow}>
+        <Ionicons
+          name={recognizing ? "radio-outline" : "shield-checkmark-outline"}
+          size={13}
+          color={recognizing ? colors.red : colors.success}
+        />
+        <Text
+          style={[
+            styles.modeHint,
+            recognizing && styles.recognizingHint,
+          ]}
+        >
+          {recognizing
+            ? "Dictando con el servicio nativo del dispositivo"
+            : SpeechRecognitionModule
+              ? "Tu voz se convierte en texto antes de enviarse"
+              : "Dictado disponible en una development build"}
+        </Text>
+      </View>
+
+      {error ? (
+        <Text style={styles.error} accessibilityRole="alert">
+          {error}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -235,12 +277,19 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
-    paddingBottom: spacing.sm,
+  },
+  inputRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 7,
   },
   input: {
-    minHeight: 43,
+    flex: 1,
+    minHeight: 44,
     maxHeight: 92,
     borderRadius: radii.input,
+    borderWidth: 1,
+    borderColor: colors.canvasStrong,
     backgroundColor: colors.canvas,
     color: colors.charcoal,
     fontFamily,
@@ -250,16 +299,14 @@ const styles = StyleSheet.create({
     paddingTop: 11,
     paddingBottom: 10,
   },
-  actions: {
-    minHeight: 42,
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 7,
+  inputRecognizing: {
+    borderColor: colors.red,
+    backgroundColor: colors.errorSoft,
   },
   micButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface,
@@ -270,17 +317,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.red,
     borderColor: colors.red,
   },
-  modeHint: {
-    flex: 1,
-    color: colors.muted,
-    fontFamily,
-    fontSize: 10,
-    marginLeft: 8,
-  },
   sendButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: colors.red,
     alignItems: "center",
     justifyContent: "center",
@@ -291,6 +331,22 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: 0.65,
     transform: [{ scale: 0.96 }],
+  },
+  hintRow: {
+    minHeight: 26,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingTop: 5,
+  },
+  modeHint: {
+    color: colors.muted,
+    fontFamily,
+    fontSize: 9,
+    marginLeft: 5,
+  },
+  recognizingHint: {
+    color: colors.red,
+    fontWeight: "700",
   },
   statusRow: {
     flexDirection: "row",
@@ -310,51 +366,11 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "600",
   },
-  recordingRow: {
-    minHeight: 43,
-    borderRadius: radii.input,
-    backgroundColor: colors.errorSoft,
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-  },
-  recordingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.red,
-    marginRight: 7,
-  },
-  recordingText: {
-    color: colors.red,
-    fontFamily,
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  waveform: {
-    flex: 1,
-    height: 22,
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 3,
-  },
-  waveBar: {
-    width: 3,
-    borderRadius: 2,
-    backgroundColor: colors.red,
-  },
-  timer: {
-    color: colors.red,
-    fontFamily,
-    fontSize: 11,
-    fontVariant: ["tabular-nums"],
-  },
   error: {
     color: colors.red,
     fontFamily,
     fontSize: 10,
     lineHeight: 14,
-    marginTop: 4,
+    paddingBottom: 4,
   },
 });

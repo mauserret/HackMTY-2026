@@ -4,13 +4,13 @@ import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { BankingProvider, useBanking } from "./src/context/BankingContext";
-import HomeScreen from "./src/screens/HomeScreen";
+import MainTabs from "./src/navigation/MainTabs";
 import LoginScreen from "./src/screens/LoginScreen";
 import { colors } from "./src/theme";
 
 function RootScreen() {
   const { session } = useBanking();
-  return session ? <HomeScreen /> : <LoginScreen />;
+  return session ? <MainTabs /> : <LoginScreen />;
 }
 
 export default function App() {

@@ -3,18 +3,18 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 
-import AccountOverview from "../components/AccountOverview";
-import BrandMark from "../components/BrandMark";
+import AppHeader from "../components/AppHeader";
 import Composer from "../components/Composer";
-import ConnectionPill from "../components/ConnectionPill";
 import DynamicUI from "../components/DynamicUI";
 import NotificationBanner from "../components/NotificationBanner";
 import { useBanking } from "../context/BankingContext";
@@ -26,25 +26,22 @@ const WELCOME_UI = {
   props: {
     title: "¿Qué quieres resolver hoy?",
     message:
-      "Descríbelo como se lo dirías a una persona. Construiré la interfaz adecuada para ti.",
+      "Descríbelo con tus propias palabras y construiré una experiencia para completarlo.",
   },
 };
 
-export default function HomeScreen() {
+export default function ChatScreen() {
   const {
-    connection,
-    session,
-    overview,
-    messages,
     assistantStatus,
-    notification,
-    logout,
-    sendMessage,
-    sendAudio,
     confirmTransfer,
-    rateInteraction,
+    connection,
     dismissNotification,
+    messages,
+    notification,
+    rateInteraction,
+    sendMessage,
   } = useBanking();
+  const insets = useSafeAreaInsets();
   const listRef = useRef(null);
 
   const renderItem = useCallback(
@@ -55,11 +52,7 @@ export default function HomeScreen() {
             <View style={styles.userBubble}>
               {item.inputMode === "voice" ? (
                 <View style={styles.voiceLabel}>
-                  <Ionicons
-                    name="mic"
-                    size={11}
-                    color="#FFD5DC"
-                  />
+                  <Ionicons name="mic" size={11} color="#FFD5DC" />
                   <Text style={styles.voiceLabelText}>DICTADO</Text>
                 </View>
               ) : null}
@@ -72,11 +65,7 @@ export default function HomeScreen() {
       return (
         <View style={styles.assistantMessageRow}>
           <View style={styles.agentMarker}>
-            <Ionicons
-              name="sparkles"
-              size={13}
-              color={colors.surface}
-            />
+            <Ionicons name="sparkles" size={13} color={colors.surface} />
           </View>
           <View style={styles.generatedContent}>
             <DynamicUI
@@ -90,48 +79,20 @@ export default function HomeScreen() {
         </View>
       );
     },
-    [confirmTransfer, rateInteraction, sendMessage]
+    [confirmTransfer, rateInteraction, sendMessage],
   );
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
+      <AppHeader />
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={0}
       >
-        <View style={styles.header}>
-          <BrandMark inverse compact />
-          <View style={styles.headerActions}>
-            <ConnectionPill state={connection} inverse />
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Cambiar de usuario"
-              onPress={logout}
-              style={({ pressed }) => [
-                styles.profileButton,
-                pressed && styles.pressed,
-              ]}
-            >
-              <View style={styles.profileAvatar}>
-                <Text style={styles.profileInitial}>
-                  {session?.name?.slice(0, 1).toUpperCase()}
-                </Text>
-              </View>
-              <Ionicons
-                name="swap-horizontal"
-                size={17}
-                color={colors.surface}
-              />
-            </Pressable>
-          </View>
-        </View>
-
-        <AccountOverview overview={overview} user={session} />
-
         <View style={styles.canvasHeading}>
           <View>
-            <Text style={styles.canvasEyebrow}>LIENZO A2UI</Text>
+            <Text style={styles.canvasEyebrow}>ASISTENTE GENERATIVO</Text>
             <Text style={styles.canvasTitle}>Tu espacio inteligente</Text>
           </View>
           <View style={styles.liveBadge}>
@@ -153,40 +114,40 @@ export default function HomeScreen() {
           </View>
         ) : null}
 
-        <View style={styles.feed}>
-          <FlatList
-            ref={listRef}
-            data={messages}
-            keyExtractor={(item) => item.id}
-            renderItem={renderItem}
-            contentContainerStyle={[
-              styles.feedContent,
-              messages.length === 0 && styles.emptyFeedContent,
-            ]}
-            ListEmptyComponent={
-              <View style={styles.welcomeCanvas}>
-                <DynamicUI
-                  message={WELCOME_UI}
-                  onConfirmTransfer={confirmTransfer}
-                  onSendMessage={sendMessage}
-                  onRate={rateInteraction}
-                />
-              </View>
-            }
-            keyboardDismissMode="interactive"
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-            onContentSizeChange={() =>
-              listRef.current?.scrollToEnd({ animated: true })
-            }
-          />
-        </View>
+        <FlatList
+          ref={listRef}
+          style={styles.feed}
+          data={messages}
+          keyExtractor={(item) => item.id}
+          renderItem={renderItem}
+          contentContainerStyle={[
+            styles.feedContent,
+            messages.length === 0 && styles.emptyFeedContent,
+          ]}
+          ListEmptyComponent={
+            <View style={styles.welcomeCanvas}>
+              <DynamicUI
+                message={WELCOME_UI}
+                onConfirmTransfer={confirmTransfer}
+                onSendMessage={sendMessage}
+                onRate={rateInteraction}
+              />
+            </View>
+          }
+          keyboardDismissMode="interactive"
+          keyboardShouldPersistTaps="handled"
+          automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+          showsVerticalScrollIndicator={false}
+          onContentSizeChange={() =>
+            listRef.current?.scrollToEnd({ animated: true })
+          }
+        />
 
         <Composer
           onSend={sendMessage}
-          onSendAudio={sendAudio}
           disabled={connection !== "connected"}
           assistantStatus={assistantStatus}
+          bottomInset={Math.min(insets.bottom, 16)}
         />
       </KeyboardAvoidingView>
 
@@ -203,43 +164,6 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: colors.red,
-  },
-  header: {
-    minHeight: 58,
-    backgroundColor: colors.red,
-    paddingHorizontal: spacing.md,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  headerActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 7,
-  },
-  profileButton: {
-    height: 34,
-    borderRadius: 17,
-    paddingHorizontal: 5,
-    paddingRight: 8,
-    backgroundColor: "rgba(255,255,255,0.16)",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  profileAvatar: {
-    width: 25,
-    height: 25,
-    borderRadius: 13,
-    backgroundColor: colors.surface,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  profileInitial: {
-    color: colors.red,
-    fontFamily,
-    fontSize: 10,
-    fontWeight: "800",
   },
   canvasHeading: {
     backgroundColor: colors.surface,
@@ -368,8 +292,5 @@ const styles = StyleSheet.create({
   },
   generatedContent: {
     flex: 1,
-  },
-  pressed: {
-    opacity: 0.62,
   },
 });

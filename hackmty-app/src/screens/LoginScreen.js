@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -25,22 +25,10 @@ import {
 } from "../theme";
 
 export default function LoginScreen() {
-  const {
-    connection,
-    demoUsers,
-    login,
-    authLoading,
-    authError,
-  } = useBanking();
-  const [username, setUsername] = useState("Mau");
-  const [password, setPassword] = useState("1234");
+  const { authError, authLoading, connection, login } = useBanking();
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-
-  useEffect(() => {
-    if (!username && demoUsers[0]?.username) {
-      setUsername(demoUsers[0].username);
-    }
-  }, [demoUsers, username]);
 
   const submit = () => login(username, password);
 
@@ -65,7 +53,7 @@ export default function LoginScreen() {
               Tu banco construye la respuesta contigo.
             </Text>
             <Text style={styles.heroBody}>
-              Habla o escribe. La interfaz se adapta a lo que necesitas.
+              Inicia sesión para consultar, analizar y operar tus finanzas.
             </Text>
             <View style={styles.heroDecorationOne} />
             <View style={styles.heroDecorationTwo} />
@@ -76,7 +64,7 @@ export default function LoginScreen() {
               <View>
                 <Text style={styles.cardTitle}>Inicia sesión</Text>
                 <Text style={styles.cardSubtitle}>
-                  Selecciona una identidad para la demo
+                  Ingresa tus credenciales de acceso
                 </Text>
               </View>
               <View style={styles.lockIcon}>
@@ -86,54 +74,6 @@ export default function LoginScreen() {
                   color={colors.red}
                 />
               </View>
-            </View>
-
-            <Text style={styles.groupLabel}>CUENTAS DISPONIBLES</Text>
-            <View style={styles.userGrid}>
-              {demoUsers.map((user) => {
-                const selected =
-                  user.username?.toLowerCase() === username.toLowerCase();
-                return (
-                  <Pressable
-                    key={user.id || user.username}
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected }}
-                    onPress={() => setUsername(user.username)}
-                    style={({ pressed }) => [
-                      styles.userChip,
-                      selected && styles.userChipSelected,
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    <View
-                      style={[
-                        styles.userAvatar,
-                        selected && styles.userAvatarSelected,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.userInitial,
-                          selected && styles.userInitialSelected,
-                        ]}
-                      >
-                        {(user.name || user.username)
-                          .slice(0, 1)
-                          .toUpperCase()}
-                      </Text>
-                    </View>
-                    <Text
-                      style={[
-                        styles.userChipText,
-                        selected && styles.userChipTextSelected,
-                      ]}
-                      numberOfLines={1}
-                    >
-                      {user.username}
-                    </Text>
-                  </Pressable>
-                );
-              })}
             </View>
 
             <View style={styles.field}>
@@ -149,8 +89,9 @@ export default function LoginScreen() {
                   onChangeText={setUsername}
                   autoCapitalize="none"
                   autoCorrect={false}
+                  textContentType="username"
                   returnKeyType="next"
-                  placeholder="Tu usuario"
+                  placeholder="Escribe tu usuario"
                   placeholderTextColor={colors.disabled}
                   style={styles.input}
                   accessibilityLabel="Usuario"
@@ -170,10 +111,10 @@ export default function LoginScreen() {
                   value={password}
                   onChangeText={setPassword}
                   secureTextEntry={!showPassword}
-                  keyboardType="number-pad"
+                  textContentType="password"
                   returnKeyType="done"
                   onSubmitEditing={submit}
-                  placeholder="Contraseña"
+                  placeholder="Escribe tu contraseña"
                   placeholderTextColor={colors.disabled}
                   style={styles.input}
                   accessibilityLabel="Contraseña"
@@ -229,26 +170,14 @@ export default function LoginScreen() {
                 </>
               )}
             </Pressable>
-
-            <View style={styles.demoNote}>
-              <Ionicons
-                name="information-circle-outline"
-                size={17}
-                color={colors.slate}
-              />
-              <Text style={styles.demoText}>
-                Acceso de demostración · contraseña maestra{" "}
-                <Text style={styles.demoPassword}>1234</Text>
-              </Text>
-            </View>
           </View>
 
           <View style={styles.techRow}>
-            <Text style={styles.techText}>LLM</Text>
+            <Text style={styles.techText}>IA</Text>
             <View style={styles.techDot} />
             <Text style={styles.techText}>MCP</Text>
             <View style={styles.techDot} />
-            <Text style={styles.techText}>A2UI en tiempo real</Text>
+            <Text style={styles.techText}>INTERFAZ EN TIEMPO REAL</Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -268,18 +197,18 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xl,
   },
   hero: {
-    minHeight: 280,
+    minHeight: 300,
     overflow: "hidden",
     backgroundColor: colors.red,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.lg,
-    paddingBottom: 70,
+    paddingBottom: 80,
   },
   brandRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 39,
+    marginBottom: 45,
   },
   heroEyebrow: {
     color: "#FFD7DE",
@@ -328,7 +257,7 @@ const styles = StyleSheet.create({
   },
   loginCard: {
     marginHorizontal: spacing.md,
-    marginTop: -46,
+    marginTop: -54,
     borderRadius: 18,
     backgroundColor: colors.surface,
     padding: spacing.lg,
@@ -360,65 +289,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.errorSoft,
     alignItems: "center",
     justifyContent: "center",
-  },
-  groupLabel: {
-    color: colors.muted,
-    fontFamily,
-    fontSize: 9,
-    fontWeight: "800",
-    letterSpacing: 1,
-    marginBottom: 7,
-  },
-  userGrid: {
-    flexDirection: "row",
-    gap: 6,
-    marginBottom: spacing.lg,
-  },
-  userChip: {
-    flex: 1,
-    minWidth: 58,
-    minHeight: 66,
-    borderRadius: 9,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.canvas,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 4,
-  },
-  userChipSelected: {
-    borderColor: colors.red,
-    backgroundColor: "#FFF5F7",
-  },
-  userAvatar: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: colors.canvasStrong,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 5,
-  },
-  userAvatarSelected: {
-    backgroundColor: colors.red,
-  },
-  userInitial: {
-    color: colors.slate,
-    fontFamily,
-    fontSize: 11,
-    fontWeight: "800",
-  },
-  userInitialSelected: {
-    color: colors.surface,
-  },
-  userChipText: {
-    color: colors.slate,
-    fontFamily,
-    fontSize: 10,
-    fontWeight: "700",
-  },
-  userChipTextSelected: {
-    color: colors.red,
   },
   field: {
     marginBottom: spacing.md,
@@ -486,22 +356,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
   },
-  demoNote: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: spacing.md,
-  },
-  demoText: {
-    color: colors.slate,
-    fontFamily,
-    fontSize: 10,
-    marginLeft: 5,
-  },
-  demoPassword: {
-    color: colors.charcoal,
-    fontWeight: "800",
-  },
   techRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -521,8 +375,5 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     backgroundColor: colors.disabled,
     marginHorizontal: 8,
-  },
-  pressed: {
-    opacity: 0.65,
   },
 });

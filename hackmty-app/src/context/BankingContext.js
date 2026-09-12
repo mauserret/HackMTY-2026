@@ -16,16 +16,8 @@ import {
   sendSocketMessage,
 } from "../services/socket";
 
-const DEFAULT_USERS = [
-  { id: "u1", username: "Mau", name: "Mauricio Rey" },
-  { id: "u2", username: "Timo", name: "Timoteo Aguilar" },
-  { id: "u3", username: "Esteban", name: "Esteban Esquivel" },
-  { id: "u4", username: "Brau", name: "Braulio García" },
-];
-
 const ASSISTANT_STATUS_MESSAGES = {
   thinking: "Construyendo tu interfaz…",
-  transcribing: "Transcribiendo tu voz…",
   transferring: "Protegiendo y enviando tu transferencia…",
 };
 
@@ -37,7 +29,6 @@ function makeId(prefix = "event") {
 
 export function BankingProvider({ children }) {
   const [connection, setConnection] = useState("idle");
-  const [demoUsers, setDemoUsers] = useState(DEFAULT_USERS);
   const [session, setSession] = useState(null);
   const [overview, setOverview] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -89,12 +80,6 @@ export function BankingProvider({ children }) {
 
     const unsubscribeMessages = onSocketMessage((message) => {
       switch (message.type) {
-        case "demo_users":
-          if (Array.isArray(message.users) && message.users.length) {
-            setDemoUsers(message.users);
-          }
-          break;
-
         case "auth_success": {
           clearAuthTimer();
           const previousId = sessionRef.current?.id;
@@ -113,6 +98,7 @@ export function BankingProvider({ children }) {
 
         case "auth_error":
           clearAuthTimer();
+          credentialsRef.current = null;
           setAuthLoading(false);
           setAuthError(message.message || "No pudimos iniciar tu sesión.");
           break;
@@ -135,16 +121,6 @@ export function BankingProvider({ children }) {
 
         case "overview_update":
           setOverview(message.overview || message.props || message.data);
-          break;
-
-        case "transcription":
-          if (message.text) {
-            appendMessage(
-              "user",
-              { type: "text", text: message.text },
-              { inputMode: "voice" }
-            );
-          }
           break;
 
         case "ui":
@@ -195,8 +171,13 @@ export function BankingProvider({ children }) {
           setAssistantStatus("");
           if (message.code?.startsWith("AUTH")) {
             clearAuthTimer();
+            credentialsRef.current = null;
             setAuthLoading(false);
-            setAuthError(message.message);
+            setAuthError(
+              message.code === "AUTH_USER_NOT_FOUND"
+                ? "El usuario no existe."
+                : message.message || "No pudimos iniciar tu sesión.",
+            );
           } else {
             appendMessage("assistant", message);
           }
@@ -257,7 +238,7 @@ export function BankingProvider({ children }) {
   }, []);
 
   const sendMessage = useCallback(
-    (text) => {
+    (text, { inputMode = "text" } = {}) => {
       const cleanText = text.trim();
       if (!cleanText || !sessionRef.current) return false;
 
@@ -268,7 +249,11 @@ export function BankingProvider({ children }) {
       });
 
       if (sent) {
-        appendMessage("user", { type: "text", text: cleanText });
+        appendMessage(
+          "user",
+          { type: "text", text: cleanText },
+          { inputMode },
+        );
         setAssistantStatus("Analizando tu solicitud…");
       }
       return sent;
@@ -276,31 +261,23 @@ export function BankingProvider({ children }) {
     [appendMessage]
   );
 
-  const sendAudio = useCallback((audioBase64, mimeType, durationMs) => {
-    if (!audioBase64 || !sessionRef.current) return false;
-    const sent = sendSocketMessage({
-      type: "audio_stream",
-      user_id: sessionRef.current.id,
-      audio_base64: audioBase64,
-      mime_type: mimeType,
-      duration_ms: durationMs,
-    });
-    if (sent) setAssistantStatus("Transcribiendo tu voz…");
-    return sent;
-  }, []);
-
   const confirmTransfer = useCallback((transfer) => {
     if (!sessionRef.current) return false;
     return sendSocketMessage({
       type: "confirm_transfer",
       user_id: sessionRef.current.id,
       request_id: transfer.request_id || transfer.requestId,
+      contact_id: transfer.contact_id || transfer.contactId,
       to_alias:
         transfer.suggested_contact ||
         transfer.to_alias ||
         transfer.recipient ||
         transfer.alias,
+      account_number:
+        transfer.account_number || transfer.accountNumber,
+      bank: transfer.bank,
       amount: Number(transfer.amount),
+      concept: transfer.concept?.trim() || "",
     });
   }, []);
 
@@ -316,7 +293,6 @@ export function BankingProvider({ children }) {
   const value = useMemo(
     () => ({
       connection,
-      demoUsers,
       session,
       overview,
       messages,
@@ -327,14 +303,12 @@ export function BankingProvider({ children }) {
       login,
       logout,
       sendMessage,
-      sendAudio,
       confirmTransfer,
       rateInteraction,
       dismissNotification: () => setNotification(null),
     }),
     [
       connection,
-      demoUsers,
       session,
       overview,
       messages,
@@ -345,7 +319,6 @@ export function BankingProvider({ children }) {
       login,
       logout,
       sendMessage,
-      sendAudio,
       confirmTransfer,
       rateInteraction,
     ]

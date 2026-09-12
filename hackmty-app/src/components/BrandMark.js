@@ -24,7 +24,7 @@ export default function BrandMark({ inverse = false, compact = false }) {
         <View style={[styles.divider, { backgroundColor: color }]} />
       )}
       {!compact && (
-        <Text style={[styles.tagline, { color }]}>A2UI</Text>
+        <Text style={[styles.tagline, { color }]}>INTELIGENTE</Text>
       )}
     </View>
   );
