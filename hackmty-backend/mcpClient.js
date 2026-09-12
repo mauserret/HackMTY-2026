@@ -11,6 +11,12 @@ const EXPECTED_TOOLS = Object.freeze([
   "createTransaction",
   "saveInteraction",
   "saveRating",
+  "get_contacts",
+  "add_contact",
+  "update_contact",
+  "add_account",
+  "get_financial_summary",
+  "get_transaction_detail",
 ]);
 
 class McpGatewayError extends Error {
@@ -68,6 +74,9 @@ class McpGateway {
     this.requestTimeoutMs = requestTimeoutMs;
     this.state = "idle";
     this.storage = this.childEnv.MONGODB_URI ? "mongodb" : "memory";
+    this.storageReason = this.childEnv.MONGODB_URI
+      ? null
+      : "MONGODB_URI_MISSING";
     this.client = null;
     this.transport = null;
     this.tools = null;
@@ -108,6 +117,8 @@ class McpGateway {
       for (const line of lines) {
         const storageMatch = line.match(/storage=(memory|mongodb)/);
         if (storageMatch) this.storage = storageMatch[1];
+        const reasonMatch = line.match(/storageReason=([A-Z0-9_]+)/);
+        if (reasonMatch) this.storageReason = reasonMatch[1];
         if (line.trim()) this.logger(`[mcp] ${line}`);
       }
     });
@@ -209,6 +220,7 @@ class McpGateway {
     return {
       status: this.state,
       storage: this.storage,
+      storageReason: this.storageReason,
       tools: this.tools?.length || 0,
       server: this.client?.getServerVersion() || null,
     };

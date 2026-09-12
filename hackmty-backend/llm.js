@@ -3,9 +3,20 @@
 require("dotenv").config({ path: require("node:path").join(__dirname, ".env") });
 
 const { z } = require("zod");
+const {
+  canonicalContact,
+  resolveContact,
+} = require("./contactResolver");
 
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
-const READ_ONLY_TOOL_NAMES = new Set(["getBalance", "getContacts", "getCreditPlans"]);
+const READ_ONLY_TOOL_NAMES = new Set([
+  "getBalance",
+  "getContacts",
+  "getCreditPlans",
+  "get_contacts",
+  "get_financial_summary",
+  "get_transaction_detail",
+]);
 const UI_COMPONENTS = [
   "balance_card",
   "contacts_list",
@@ -13,6 +24,9 @@ const UI_COMPONENTS = [
   "transfer_form",
   "clarification_card",
   "quick_actions",
+  "financial_chart",
+  "transactions_summary",
+  "transaction_detail",
 ];
 
 const a2uiSchema = z
@@ -23,12 +37,36 @@ const a2uiSchema = z
   })
   .strict();
 
+const transferInitialValuesSchema = z.object({
+  recipient: z.string().max(120),
+  amount: z.string().max(32),
+  concept: z.string().max(120),
+  accountNumber: z.string().max(40),
+  bank: z.string().max(80),
+});
+
 const transferPropsSchema = z.object({
-  to_alias: z.string().min(1).max(64),
-  recipient_name: z.string().min(1).max(120),
-  amount: z.number().finite().positive().max(1_000_000),
+  contact_id: z.string().max(128),
+  to_alias: z.string().max(120),
+  recipient_name: z.string().max(120),
+  account_number: z.string().max(40),
+  bank: z.string().max(80),
+  amount: z.number().finite().positive().max(1_000_000).nullable(),
+  concept: z.string().max(120),
   currency: z.literal("MXN"),
   requires_confirmation: z.literal(true),
+  initialValues: transferInitialValuesSchema,
+  missing_fields: z.array(z.enum(["recipient", "amount"])),
+  available_contacts: z.array(
+    z.object({
+      alias: z.string(),
+      display_name: z.string(),
+      contact_id: z.string(),
+      fullName: z.string(),
+      accountNumber: z.string(),
+      bank: z.string(),
+    }),
+  ),
 });
 
 const chatSessions = new Map();
@@ -44,8 +82,12 @@ Forma obligatoria:
 {"type":"ui","component":"nombre_del_componente","props":{...}}
 
 Componentes permitidos: balance_card, contacts_list, credit_plan_table,
-transfer_form, clarification_card y quick_actions. Nunca respondas con texto
-suelto o con type="text". Los datos financieros deben venir de tools.
+transfer_form, clarification_card, quick_actions y financial_chart. Usa
+financial_chart cuando el usuario pida gráficas, actividad o comparación de
+movimientos; chartType debe ser bar, pie o line. Usa transactions_summary para
+un historial general y transaction_detail para una sola operación. Nunca
+respondas con texto suelto o con type="text". Los datos financieros deben venir
+de tools.
 
 Reglas de seguridad:
 - La identidad indicada por el contexto del sistema es la única válida.
@@ -53,7 +95,9 @@ Reglas de seguridad:
 - createTransaction no está disponible. Una solicitud de transferencia solo
   produce transfer_form; incluso "confirmo" debe pedir usar el botón de
   confirmación de la interfaz.
-- Si faltan monto o contacto, usa clarification_card.
+- En transferencias extrae persona, monto y concepto. Produce transfer_form
+  incluso si falta algún dato: usa initialValues con cadenas vacías para que
+  el usuario pueda completar o corregir todos los campos.
 - Para solicitudes fuera de alcance, usa quick_actions.
 `.trim();
 
@@ -229,7 +273,11 @@ function parseAmount(text) {
     const amount = parseLocalizedNumber(match[1]);
     if (amount !== null) return amount;
   }
-  return parseSpanishNumberWords(text);
+  const withoutNumericArticles = normalizeText(text).replace(
+    /\b(?:un|una|uno)\s+(?=transferencia|cuenta|persona|contacto|operacion|solicitud)\b/g,
+    "",
+  );
+  return parseSpanishNumberWords(withoutNumericArticles);
 }
 
 function contactTerms(contact) {
@@ -256,6 +304,125 @@ function extractContact(text, contacts) {
   return candidates.find(({ term }) => containsTerm(text, term))?.contact || null;
 }
 
+function cleanEntityText(value, { dropArticle = false } = {}) {
+  let cleaned = String(value || "")
+    .replace(/\s*(?:,|;)?\s*(?:por favor|gracias)\s*$/iu, "")
+    .replace(/^[\s:,-]+|[\s,.;:!?-]+$/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (dropArticle) {
+    cleaned = cleaned.replace(/^(?:el|la|los|las)\s+/iu, "");
+  }
+  if (!cleaned) return "";
+  return `${cleaned.charAt(0).toLocaleUpperCase("es-MX")}${cleaned.slice(1)}`.slice(
+    0,
+    120,
+  );
+}
+
+function extractRecipientName(text) {
+  const match = String(text).match(
+    /\b(a|para)\s+([\p{L}][\p{L}'’.-]*(?:\s+[\p{L}][\p{L}'’.-]*){0,3}?)(?=\s+(?:por|con\s+(?:el\s+)?concepto|concepto|para\s+(?:el|la|los|las))\b|\s+\$?\d|[,.;!?]|$)/iu,
+  );
+  if (!match) return "";
+  const recipient = cleanEntityText(match[2]);
+  if (
+    !recipient ||
+    /^(?:alguien|persona|un contacto|contacto|destinatario)$/iu.test(recipient) ||
+    (normalizeText(match[1]) === "para" &&
+      /^(?:el|la|los|las)\b/iu.test(recipient))
+  ) {
+    return "";
+  }
+  return recipient;
+}
+
+function extractConcept(text) {
+  const input = String(text);
+  const patterns = [
+    /\b(?:con\s+(?:el\s+)?concepto|concepto|descripci[oó]n)(?:\s+de)?\s*[:=-]?\s+(.+)$/iu,
+    /\bpor\s+(?!favor\b)(.+)$/iu,
+    /\bpara\s+((?:el|la|los|las)\s+.+)$/iu,
+  ];
+  for (const pattern of patterns) {
+    const match = input.match(pattern);
+    const concept = cleanEntityText(match?.[1], { dropArticle: true });
+    if (concept && normalizeText(concept) !== "favor") return concept;
+  }
+  return "";
+}
+
+function positiveHintedAmount(value) {
+  if (value === "" || value === null || value === undefined) return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 && numeric <= 1_000_000
+    ? Math.round(numeric * 100) / 100
+    : null;
+}
+
+function extractTransferEntities(text, contacts, hints = {}, previous = {}) {
+  const initialValues = hints.initialValues || {};
+  const hintedRecipient =
+    initialValues.recipient ||
+    hints.recipient_name ||
+    hints.recipient ||
+    hints.person ||
+    hints.to_alias ||
+    "";
+  const extractedRecipient = extractRecipientName(text);
+  const contactFromText =
+    extractContact(text, contacts) ||
+    resolveContact(extractedRecipient, contacts)?.record ||
+    null;
+  const contactFromHint =
+    resolveContact(hintedRecipient, contacts)?.record ||
+    extractContact(hintedRecipient, contacts);
+  const knownContact =
+    contactFromText ||
+    (!extractedRecipient &&
+      (contactFromHint ||
+        contacts.find(
+          (contact) =>
+            String(contact.contact_id || contact.id) ===
+              String(previous.contactId || "") ||
+            normalizeText(contact.alias) ===
+              normalizeText(previous.toAlias || ""),
+        ))) ||
+    null;
+  const canonical = knownContact ? canonicalContact(knownContact) : null;
+  const recipient =
+    canonical?.fullName ||
+    extractedRecipient ||
+    cleanEntityText(hintedRecipient) ||
+    previous.recipientName ||
+    previous.toAlias ||
+    "";
+  const amount =
+    parseAmount(text) ??
+    positiveHintedAmount(initialValues.amount ?? hints.amount) ??
+    previous.amount ??
+    null;
+  const concept =
+    extractConcept(text) ||
+    cleanEntityText(
+      initialValues.concept || hints.concept || hints.description || "",
+      { dropArticle: true },
+    ) ||
+    previous.concept ||
+    "";
+
+  return {
+    contact: knownContact,
+    contactId: canonical?.id || "",
+    toAlias: canonical?.alias || recipient,
+    recipient,
+    accountNumber: canonical?.accountNumber || "",
+    bank: canonical?.bank || "",
+    amount,
+    concept,
+  };
+}
+
 function getMemory(userId) {
   if (!localMemories.has(userId)) {
     localMemories.set(userId, { transferDraft: null, turns: [] });
@@ -269,8 +436,13 @@ function remember(userId, text, ui) {
   if (memory.turns.length > 12) memory.turns.shift();
   if (ui.component === "transfer_form") {
     memory.transferDraft = {
+      contactId: ui.props.contact_id,
       toAlias: ui.props.to_alias,
+      recipientName: ui.props.recipient_name,
+      accountNumber: ui.props.account_number,
+      bank: ui.props.bank,
       amount: ui.props.amount,
+      concept: ui.props.concept,
     };
   } else if (ui.component !== "clarification_card") {
     memory.transferDraft = null;
@@ -296,6 +468,16 @@ function quickActions(message = "¿Qué operación quieres realizar?") {
           id: "transfer",
           label: "Hacer transferencia",
           prompt: "Quiero hacer una transferencia",
+        },
+        {
+          id: "chart",
+          label: "Ver actividad",
+          prompt: "Muéstrame una gráfica de mis movimientos",
+        },
+        {
+          id: "history",
+          label: "Resumen de operaciones",
+          prompt: "Muéstrame el resumen de transferencias",
         },
       ],
     },
@@ -378,70 +560,221 @@ async function creditUI(userId, mcp) {
   };
 }
 
-async function transferUI(userId, text, mcp, hints = {}) {
-  const result = await mcp.callTool("getContacts", { userId });
-  const memory = getMemory(userId);
-  const previous = memory.transferDraft || {};
-  const hintedText = [text, hints.to_alias, hints.suggested_contact, hints.recipient_name]
-    .filter(Boolean)
-    .join(" ");
-  const contact =
-    extractContact(hintedText, result.contacts) ||
-    result.contacts.find((candidate) => candidate.alias === previous.toAlias) ||
-    null;
-  const hintedAmount = Number(hints.amount);
-  const amount =
-    parseAmount(text) ||
-    (Number.isFinite(hintedAmount) && hintedAmount > 0 ? hintedAmount : null) ||
-    previous.amount ||
-    null;
+function requestedChartType(text, hints = {}) {
+  const requested = normalizeText(
+    hints.chartType || hints.chart_type || text,
+  );
+  if (/\b(pastel|pie|circular|dona|donut)\b/.test(requested)) return "pie";
+  if (/\b(linea|lineal|line|tendencia|evolucion|tiempo)\b/.test(requested)) {
+    return "line";
+  }
+  return "bar";
+}
 
-  memory.transferDraft = {
-    toAlias: contact?.alias || previous.toAlias || null,
-    amount,
+async function financialChartUI(userId, mcp, text = "", hints = {}) {
+  const chartType = requestedChartType(text, hints);
+  const summary = await mcp.callTool("get_financial_summary", {
+    userId,
+    groupBy: chartType === "pie" ? "category" : "day",
+  });
+  const wantsExpenses = /\b(gasto|gastos|salida|salidas)\b/.test(
+    normalizeText(text),
+  );
+  let data;
+  if (chartType === "pie") {
+    data = summary.categories.map((category) => ({
+      label: category.category,
+      value: category.total,
+      count: category.count,
+    }));
+  } else {
+    data = summary.groups.slice(-12).map((group) => ({
+      label: group.label,
+      value: wantsExpenses
+        ? group.outgoing
+        : group.total,
+      incoming: group.incoming,
+      outgoing: group.outgoing,
+      count: group.count,
+    }));
+  }
+  if (!data.length) {
+    data = [
+      { label: "Entradas", value: summary.totals.incoming },
+      { label: "Salidas", value: summary.totals.outgoing },
+    ];
+  }
+  return {
+    type: "ui",
+    component: "financial_chart",
+    props: {
+      title:
+        chartType === "pie"
+          ? "Distribución de gastos"
+          : wantsExpenses
+            ? "Evolución de gastos"
+            : "Actividad financiera",
+      message: `${summary.totals.count} operaciones analizadas.`,
+      chartType,
+      data,
+      currency: "MXN",
+      totals: summary.totals,
+    },
   };
+}
 
-  const missingFields = [];
-  if (!contact) missingFields.push("contact");
-  if (!amount) missingFields.push("amount");
-  if (missingFields.length) {
+async function transactionsSummaryUI(userId, mcp) {
+  const summary = await mcp.callTool("get_financial_summary", {
+    userId,
+    groupBy: "day",
+  });
+  const grouped = new Map();
+  for (const transaction of summary.transactions) {
+    const key = transaction.timestamp.slice(0, 10);
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(transaction);
+  }
+  return {
+    type: "ui",
+    component: "transactions_summary",
+    props: {
+      title: "Resumen de operaciones",
+      totals: summary.totals,
+      groups: [...grouped.entries()].map(([date, transactions]) => ({
+        date,
+        transactions,
+      })),
+      empty_message: "Todavía no hay operaciones en este periodo.",
+    },
+  };
+}
+
+function transactionIdFromText(text) {
+  return String(text).match(/\b(tx_[A-Za-z0-9_-]+|[a-fA-F0-9]{24})\b/)?.[1] || "";
+}
+
+async function transactionDetailUI(userId, text, mcp) {
+  const summary = await mcp.callTool("get_financial_summary", {
+    userId,
+    groupBy: "day",
+  });
+  const explicitId = transactionIdFromText(text);
+  const target = extractRecipientName(text);
+  const normalizedTarget = normalizeText(target);
+  const candidate =
+    summary.transactions.find(
+      (transaction) => transaction.transactionId === explicitId,
+    ) ||
+    (normalizedTarget
+      ? summary.transactions.find((transaction) =>
+          [
+            transaction.recipient,
+            transaction.recipientAlias,
+            transaction.sender,
+          ].some((value) => {
+            const normalized = normalizeText(value);
+            return (
+              normalized === normalizedTarget ||
+              normalized.startsWith(`${normalizedTarget} `) ||
+              normalizedTarget === normalized.split(" ")[0]
+            );
+          }),
+        )
+      : summary.transactions[0]);
+
+  if (!candidate) {
     return {
       type: "ui",
       component: "clarification_card",
       props: {
-        title: "Completa la transferencia",
+        title: "No encontré esa operación",
         message:
-          missingFields.length === 2
-            ? "Indica a quién y cuánto quieres transferir."
-            : missingFields[0] === "contact"
-              ? "¿A cuál de tus contactos quieres transferir?"
-              : `¿Cuánto quieres transferir a ${contact.display_name}?`,
-        missing_fields: missingFields,
-        draft: {
-          to_alias: contact?.alias || previous.toAlias || null,
-          amount,
-          currency: "MXN",
-        },
-        quick_actions: result.contacts.map((candidate) => ({
-          label: candidate.display_name,
-          prompt: candidate.alias,
-        })),
+          "Indica el destinatario o abre el resumen para elegir una transferencia.",
+        choices: [
+          {
+            label: "Ver resumen de operaciones",
+            prompt: "Muéstrame el resumen de transferencias",
+          },
+        ],
       },
     };
   }
+  const detail = await mcp.callTool("get_transaction_detail", {
+    userId,
+    transactionId: candidate.transactionId,
+  });
+  return {
+    type: "ui",
+    component: "transaction_detail",
+    props: {
+      title: "Detalle de operación",
+      transaction: detail.transaction,
+    },
+  };
+}
+
+async function transferUI(userId, text, mcp, hints = {}) {
+  const result = await mcp.callTool("getContacts", { userId });
+  const memory = getMemory(userId);
+  const previous = memory.transferDraft || {};
+  const entities = extractTransferEntities(
+    text,
+    result.contacts,
+    hints,
+    previous,
+  );
+
+  memory.transferDraft = {
+    contactId: entities.contactId,
+    toAlias: entities.toAlias,
+    recipientName: entities.recipient,
+    accountNumber: entities.accountNumber,
+    bank: entities.bank,
+    amount: entities.amount,
+    concept: entities.concept,
+  };
+
+  const missingFields = [];
+  if (!entities.recipient) missingFields.push("recipient");
+  if (!entities.amount) missingFields.push("amount");
 
   const props = transferPropsSchema.parse({
-    to_alias: contact.alias,
-    recipient_name: contact.display_name,
-    amount: Math.round(amount * 100) / 100,
+    contact_id: entities.contactId,
+    to_alias: entities.toAlias,
+    recipient_name: entities.recipient,
+    account_number: entities.accountNumber,
+    bank: entities.bank,
+    amount: entities.amount,
+    concept: entities.concept,
     currency: "MXN",
     requires_confirmation: true,
+    initialValues: {
+      recipient: entities.recipient,
+      amount: entities.amount === null ? "" : String(entities.amount),
+      concept: entities.concept,
+      accountNumber: entities.accountNumber,
+      bank: entities.bank,
+    },
+    missing_fields: missingFields,
+    available_contacts: result.contacts.map((contact) => {
+      const canonical = canonicalContact(contact);
+      return {
+        alias: canonical.alias,
+        display_name: canonical.fullName,
+        contact_id: canonical.id,
+        fullName: canonical.fullName,
+        accountNumber: canonical.accountNumber,
+        bank: canonical.bank,
+      };
+    }),
   });
   return {
     type: "ui",
     component: "transfer_form",
     props: {
-      title: "Revisa tu transferencia",
+      title: missingFields.length
+        ? "Completa tu transferencia"
+        : "Revisa tu transferencia",
       ...props,
     },
   };
@@ -463,6 +796,26 @@ function isTransferIntent(text) {
   return /\b(transf|transfer|envia|enviar|manda|mandar|deposit|pasale|pagale)\w*/.test(text);
 }
 
+function isChartIntent(text) {
+  return /\b(grafic|grafiqu|chart|visualiz|pastel|pie|linea|barras?|estadistic)\w*/.test(
+    text,
+  );
+}
+
+function isTransactionDetailIntent(text) {
+  return (
+    /\b(detalle|recibo|comprobante)\b/.test(text) &&
+    /\b(pago|transferencia|operacion|movimiento)\b/.test(text)
+  );
+}
+
+function isTransactionsSummaryIntent(text) {
+  return (
+    /\b(resumen|historial|lista|ultim[oa]s?)\b/.test(text) &&
+    /\b(transferencias?|operaciones?|pagos?|movimientos?)\b/.test(text)
+  );
+}
+
 function isConfirmationIntent(text) {
   return /\b(confirmo|confirmar|confirmado|hazlo|adelante|si acepto|si,? procede)\b/.test(text);
 }
@@ -473,6 +826,15 @@ async function localFallback(userId, text, mcp) {
 
   if (isConfirmationIntent(normalized) && memory.transferDraft) {
     return confirmationCard();
+  }
+  if (isTransactionDetailIntent(normalized)) {
+    return transactionDetailUI(userId, text, mcp);
+  }
+  if (isChartIntent(normalized)) {
+    return financialChartUI(userId, mcp, text);
+  }
+  if (isTransactionsSummaryIntent(normalized)) {
+    return transactionsSummaryUI(userId, mcp);
   }
   if (isCreditIntent(normalized)) {
     return creditUI(userId, mcp);
@@ -508,6 +870,16 @@ async function executeModelTool(userId, call, mcp) {
     if (call.name === "getBalance" || call.name === "getContacts") {
       return await mcp.callTool(call.name, { userId });
     }
+    if (
+      call.name === "get_contacts" ||
+      call.name === "get_financial_summary" ||
+      call.name === "get_transaction_detail"
+    ) {
+      return await mcp.callTool(call.name, {
+        ...call.args,
+        userId,
+      });
+    }
     const ownBalance = await mcp.callTool("getBalance", { userId });
     const ownAccountIds = new Set(ownBalance.accounts.map((account) => account.account_id));
     if (!ownAccountIds.has(call.args?.accountId)) {
@@ -539,6 +911,12 @@ async function hydrateModelUI(userId, text, modelUI, mcp) {
       return creditUI(userId, mcp);
     case "transfer_form":
       return transferUI(userId, text, mcp, modelUI.props);
+    case "financial_chart":
+      return financialChartUI(userId, mcp, text, modelUI.props);
+    case "transactions_summary":
+      return transactionsSummaryUI(userId, mcp);
+    case "transaction_detail":
+      return transactionDetailUI(userId, text, mcp);
     case "clarification_card":
     case "quick_actions":
       return modelUI;
@@ -626,7 +1004,11 @@ function clearMemory(userId) {
 module.exports = {
   MODEL,
   clearMemory,
+  extractConcept,
   extractContact,
+  extractRecipientName,
+  extractTransferEntities,
+  financialChartUI,
   getApiKey,
   getGoogleClient,
   localFallback,
@@ -635,4 +1017,7 @@ module.exports = {
   parseLocalizedNumber,
   parseModelJson,
   processMessage,
+  requestedChartType,
+  transactionDetailUI,
+  transactionsSummaryUI,
 };

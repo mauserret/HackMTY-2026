@@ -3,7 +3,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  extractConcept,
   extractContact,
+  extractRecipientName,
   normalizeText,
   parseAmount,
   parseLocalizedNumber,
@@ -37,6 +39,20 @@ test("resuelve nombres y aliases a un contacto canónico", () => {
   ];
   assert.equal(extractContact("envía 500 a Timoteo", contacts).alias, "Timo");
   assert.equal(extractContact("depositar a Brau", contacts).display_name, "Braulio Garcia");
+});
+
+test("extrae persona y concepto de una solicitud de transferencia", () => {
+  const prompt = "Quiero transferir $500 a Carlos por la cena";
+  assert.equal(extractRecipientName(prompt), "Carlos");
+  assert.equal(extractConcept(prompt), "Cena");
+  assert.equal(
+    extractConcept("Mándale $100 a Timo con concepto de transporte"),
+    "Transporte",
+  );
+  assert.equal(
+    extractConcept("Mándale $100 a Timo, por favor"),
+    "",
+  );
 });
 
 test("rechaza texto muerto y acepta JSON A2UI estricto", () => {

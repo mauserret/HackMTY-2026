@@ -5,7 +5,11 @@ require("dotenv").config({ path: require("node:path").join(__dirname, ".env") })
 const { closeDB, connectDB } = require("./db");
 
 async function seed() {
-  const storage = await connectDB();
+  const hasMongoUri = Boolean(process.env.MONGODB_URI?.trim());
+  const storage = await connectDB({
+    ensureIndexes: false,
+    required: hasMongoUri,
+  });
   const data = await storage.replaceWithDemoData();
   const persistence =
     storage.kind === "memory"
@@ -14,7 +18,8 @@ async function seed() {
 
   console.log(
     `Seed listo: ${data.users.length} usuarios, ${data.contacts.length} contactos, ` +
-      `${data.creditPlans.length} plan de crédito; storage=${storage.kind}, ${persistence}.`,
+      `${data.transactions.length} transacciones y ${data.creditPlans.length} plan de crédito; ` +
+      `storage=${storage.kind}, ${persistence}.`,
   );
 }
 

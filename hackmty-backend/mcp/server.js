@@ -66,7 +66,10 @@ async function main() {
   const storage = await connectDB();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`MCP listo; storage=${storage.kind}`);
+  const reason = storage.fallbackReason
+    ? `; storageReason=${storage.fallbackReason}`
+    : "";
+  console.error(`MCP listo; storage=${storage.kind}${reason}`);
 }
 
 process.once("SIGINT", () => {

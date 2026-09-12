@@ -1,58 +1,56 @@
 # BanAI backend
 
-Backend de la demo Banorte para HackMTY. Expone HTTP y WebSocket desde un mismo
-servidor, genera respuestas A2UI y ejecuta toda operación financiera mediante un
-servidor MCP aislado por stdio.
+Backend de la demo Banorte: HTTP y WebSocket en un mismo servidor, generación
+de interfaces declarativas y ejecución de toda lógica financiera mediante un
+servidor MCP aislado por `stdio`.
 
-Requiere Node.js 20 o posterior.
+Requiere Node.js 20.19 o posterior.
 
-## Inicio rápido sin secretos
+## Inicio rápido
 
 ```bash
 npm install
 npm start
 ```
 
-Sin `MONGODB_URI`, el subproceso MCP inicia automáticamente con cuatro usuarios,
-12 contactos y un plan de crédito en memoria. Esta modalidad es funcional pero
-efímera: todos los cambios se pierden al reiniciar.
-
-La contraseña maestra de la demo es `1234`, salvo que `DEMO_PASSWORD` indique
-otra. Los usuarios son:
-
-- `Mau` — Mauricio Rey (`u1`)
-- `Timo` — Timoteo Aguilar (`u2`)
-- `Esteban` — Esteban Esquivel (`u3`)
-- `Brau` — Braulio Garcia (`u4`)
-
-Comprueba el proceso:
+Sin `MONGODB_URI`, el subproceso MCP inicia con un fixture efímero. Con una URI
+configurada intenta usar Atlas; si el servicio no está disponible, el servidor
+continúa en memoria salvo que `MONGODB_REQUIRED=true`.
 
 ```bash
 curl http://localhost:4000/health
-curl http://localhost:4000/api/demo-users
 ```
 
-`/health` reporta explícitamente `storage: "memory"` o `storage: "mongodb"` y
-si la persistencia está activa.
+La respuesta distingue `storage: "mongodb"` de `storage: "memory"`, expone
+`persistent` y, cuando hay fallback, agrega `storage_reason`.
 
 ## MongoDB Atlas
 
 ```bash
 cp .env.example .env
-# Configura MONGODB_URI en .env
+# Configura MONGODB_URI sin compartir el secreto
 npm run seed
 npm start
 ```
 
-La base por defecto es `hackmty_db`. `npm run seed` reemplaza los datos de las
-colecciones demo, por lo que no debe ejecutarse contra una base con información
-que se quiera conservar.
+La base por defecto es `hackmty_db`. `npm run seed` reemplaza las colecciones
+del fixture, por lo que no debe ejecutarse contra datos que se quieran
+conservar. Si existe `MONGODB_URI`, el seed exige una conexión persistente y no
+se degrada silenciosamente a memoria.
 
-Se crean índices únicos para usernames, cuentas, contactos, planes de crédito e
-idempotency keys, además de índices para historiales. En Atlas, las transferencias
-usan una transacción MongoDB con `snapshot` y escritura `majority`. En un servidor
-Mongo que no soporte transacciones se usa una ruta serializada con compensación;
-esa ruta no ofrece las mismas garantías ACID ante la caída completa del proceso.
+Al iniciar:
+
+1. se comprueba la conexión con `ping`;
+2. se migran índices anteriores con opciones incompatibles;
+3. los índices únicos de campos nuevos usan filtros parciales para no chocar
+   con documentos legacy;
+4. el servidor MCP se conecta al transporte `stdio`.
+
+El error `ATLAS_TLS_HANDSHAKE_REJECTED` indica que Atlas cerró TLS antes de la
+autenticación. Revisa en Atlas que el clúster esté activo y que **Network
+Access** permita la IP pública actual. `MONGODB_REQUIRED=true` convierte este
+diagnóstico en un fallo de arranque; el valor predeterminado mantiene la demo
+operativa en memoria.
 
 ## Arquitectura
 
@@ -66,15 +64,14 @@ cliente
                                                     └─ db.js → Atlas o memoria
 ```
 
-- `server.js` nunca importa la lógica de negocio.
-- `mcpClient.js` inicia `mcp/server.js` con `StdioClientTransport`.
-- `mcp/server.js` publica las tools y reserva stdout exclusivamente para
-  JSON-RPC; sus diagnósticos van a stderr.
-- `mcpTools.js` concentra validación y lógica financiera.
-- `llm.js` obtiene los esquemas con `listTools` y ejecuta consultas con
-  `callTool`. `createTransaction` nunca se expone a Gemini.
+- `server.js` administra autenticación, sesiones y confirmaciones.
+- `mcpClient.js` inicia el subproceso y valida su catálogo.
+- `mcpTools.js` concentra validación, consultas y mutaciones financieras.
+- `llm.js` solo entrega a Gemini tools de lectura; una transferencia se ejecuta
+  exclusivamente desde la confirmación del servidor.
 
-Las seis tools MCP publicadas son exactamente:
+El catálogo MCP publica 12 tools. Las seis originales se conservan para
+compatibilidad:
 
 - `getBalance({ userId })`
 - `getContacts({ userId })`
@@ -83,107 +80,89 @@ Las seis tools MCP publicadas son exactamente:
 - `saveInteraction({ userId, prompt, response })`
 - `saveRating({ interactionId, rating })`
 
+Las nuevas operaciones son:
+
+- `get_contacts({ userId })`
+- `add_contact({ userId, name, alias, accountNumber, bank })`
+- `update_contact({ userId, contactId, ...changes })`
+- `add_account({ userId, type, accountNumber, bank, ... })`
+- `get_financial_summary({ userId, startDate?, endDate?, groupBy? })`
+- `get_transaction_detail({ userId, transactionId })`
+
+`get_contacts` entrega el registro canónico (`id`, `alias`, `fullName`,
+`accountNumber`, `bank`). Las mutaciones validan propiedad y duplicados. Las
+tools analíticas solo devuelven operaciones en las que participa el usuario.
+
 ## WebSocket
 
-Conecta a `ws://localhost:4000`. Al abrirse, el servidor envía:
+Conecta a `ws://localhost:4000` e inicia sesión:
 
 ```json
-{"type":"demo_users","users":[{"id":"u1","name":"Mauricio Rey","username":"Mau"}]}
+{"type":"auth_login","username":"USUARIO","password":"CONTRASEÑA"}
 ```
 
-Inicia sesión:
+El servidor no enumera cuentas al abrir el socket. Un usuario inexistente
+produce `AUTH_USER_NOT_FOUND`; una contraseña incorrecta,
+`AUTH_INVALID_PASSWORD`.
+
+Una vez autenticado admite:
 
 ```json
-{"type":"auth_login","username":"Mau","password":"1234"}
-```
-
-El servidor responde `auth_success` con el usuario y su overview. Una vez
-autenticado admite:
-
-```json
-{"type":"user_message","text":"¿Cuál es mi saldo?"}
-{"type":"audio_stream","audio_base64":"BASE64","mime_type":"audio/webm"}
-{"type":"confirm_transfer","request_id":"UUID_DEL_FORMULARIO"}
+{"type":"user_message","text":"Muéstrame una gráfica de mis movimientos"}
+{"type":"confirm_transfer","request_id":"UUID_DEL_FORMULARIO","to_alias":"Timo","amount":500,"concept":"Cena"}
 {"type":"rate_interaction","interaction_id":"ID_RECIBIDO","rating":10}
 {"type":"auth_logout"}
 ```
 
-Cualquier `user_id`, `userId` o identidad adicional del cliente se descarta. La
-sesión autenticada es la única fuente de identidad.
+El reconocimiento de voz ocurre en el cliente con APIs nativas y llega como
+`user_message`; el backend ya no recibe archivos o base64 de audio. Cualquier
+identidad adicional enviada por el cliente se descarta: la sesión del socket es
+la única fuente de identidad.
 
-Las respuestas operativas son `assistant_status`, `ui`, `overview_update`,
-`notification`, `transcription`, `rating_saved` y `error`. Los errores incluyen
-`code`, `message` y `recoverable`.
+Las respuestas son `assistant_status`, `ui`, `overview_update`,
+`notification`, `rating_saved` y `error`.
 
-`audio` y `data` se conservan como aliases compatibles de `audio_base64`, pero
-el último es el nombre canónico del contrato A2UI.
-
-### Confirmación de transferencias
+## Confirmación de transferencias
 
 Una petición conversacional nunca mueve dinero. El primer turno genera
-`transfer_form` con un `request_id` aleatorio. Solo `confirm_transfer` con ese
-identificador puede invocar `createTransaction`.
+`transfer_form` con un `request_id`; solo `confirm_transfer` puede invocar
+`createTransaction`.
 
-El servidor conserva una única transferencia pendiente por socket, la expira a
-los diez minutos, bloquea confirmaciones paralelas y recuerda requests ya
-completados. El mismo `request_id` también es la llave idempotente en MCP, por lo
-que un retry no duplica el cargo. Al completar:
+El formulario incluye `initialValues.recipient`, `initialValues.amount`,
+`initialValues.concept`, `initialValues.accountNumber` e
+`initialValues.bank`. Antes de confirmar, el resolver vincula alias, apodo,
+primer nombre, nombre completo o typo corto con un `contact_id` canónico. La
+confirmación envía juntos id, alias y cuenta; MCP rechaza combinaciones de
+registros distintos.
 
-1. guarda `transfer_success` en `interactions`;
-2. añade su `interaction_id` al mensaje `ui`;
-3. actualiza overviews de emisor y receptor conectados;
-4. notifica al receptor.
-
-Toda respuesta `ui`, incluso cards de aclaración, se guarda con
-`saveInteraction` antes de enviarse.
+El servidor mantiene una única transferencia pendiente por socket, la expira,
+bloquea confirmaciones paralelas y usa el mismo `request_id` como llave
+idempotente. Después actualiza saldos y movimientos de ambas partes y notifica
+al receptor.
 
 ## Gemini y fallback
 
-Configura `GEMINI_API_KEY` o su alias compatible `LLM_API_KEY`. El SDK se carga de
-forma lazy y el modelo por defecto es `gemini-3.6-flash`, configurable con
-`GEMINI_MODEL`.
+`GEMINI_API_KEY` o `LLM_API_KEY` habilitan la interpretación semántica. El
+modelo se configura con `GEMINI_MODEL`. Sin llave o si Gemini falla, el
+intérprete local consulta MCP y cubre:
 
-Sin key o si Gemini falla, el fallback local sigue consultando MCP y cubre:
+- saldos, cuentas y contactos;
+- planes de crédito;
+- gráficas con datos financieros reales;
+- resumen global y detalle de una sola operación;
+- transferencias coloquiales con confirmación;
+- aclaraciones y acciones rápidas.
 
-- saldos y cuentas;
-- contactos;
-- reestructura, CAT e intereses;
-- transferencia coloquial con monto y alias;
-- datos faltantes mediante `clarification_card`;
-- opciones generales mediante `quick_actions`.
-
-El fallback no ejecuta mutaciones. Una frase como “confirmo” enviada como
-`user_message` pide usar el botón seguro; no transfiere.
-
-## Audio
-
-La transcripción usa audio inline de `@google/genai`. Requiere una API key aunque
-el chat de texto pueda operar en fallback. Por defecto acepta hasta 4 MiB de
-audio base64 en formatos AAC, FLAC, MP4, MPEG, OGG, WAV y WebM. Los límites y el
-modelo se ajustan con `MAX_AUDIO_BYTES` y `GEMINI_TRANSCRIPTION_MODEL`.
-
-`audio_stream` recibe un clip completo, no chunks incrementales.
-
-## Seguridad operativa
-
-- autenticación por socket y límite de intentos;
-- payload WebSocket máximo, audio validado y compresión desactivada;
-- aliases normalizados sin expresiones regulares dinámicas;
-- montos positivos, finitos, con máximo dos decimales;
-- ratings enteros de 1 a 10 y restringidos a interacciones de la sesión;
-- cola por socket, rate limit, heartbeat ping/pong y apagado limpio;
-- allowlist opcional de origins mediante `WS_ALLOWED_ORIGINS`.
-
-La contraseña maestra es adecuada solo para esta demo, no para producción.
+Gemini no participa en la conversión de voz.
 
 ## Scripts
 
 ```bash
-npm start       # servidor HTTP + WebSocket y subproceso MCP
-npm run dev     # reinicio automático de Node
-npm run seed    # reemplaza el seed en Atlas; en memoria solo valida el fixture
-npm test        # pruebas unitarias e integración MCP sin credenciales
+npm start
+npm run dev
+npm run seed
+npm test
 npm run test:mcp
 ```
 
-Las pruebas fuerzan storage en memoria y no contactan MongoDB ni Gemini.
+Las pruebas fuerzan memoria y no contactan MongoDB ni Gemini.

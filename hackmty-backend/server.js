@@ -7,13 +7,12 @@ const http = require("node:http");
 const express = require("express");
 const { WebSocket, WebSocketServer } = require("ws");
 const { z } = require("zod");
-const { AudioError, MAX_AUDIO_BYTES, transcribeAudio } = require("./audio");
 const { getPublicDemoUsers } = require("./demoData");
 const { clearMemory, normalizeText, processMessage } = require("./llm");
 const { McpGateway, McpGatewayError } = require("./mcpClient");
 
 const DEFAULT_PORT = 4000;
-const DEFAULT_MAX_WS_PAYLOAD = 6 * 1024 * 1024;
+const DEFAULT_MAX_WS_PAYLOAD = 256 * 1024;
 const DEFAULT_HEARTBEAT_MS = 30000;
 const PENDING_TRANSFER_TTL_MS = 10 * 60 * 1000;
 const RATE_WINDOW_MS = 10 * 1000;
@@ -30,23 +29,15 @@ const eventSchemas = Object.freeze({
     type: z.literal("user_message"),
     text: z.string().trim().min(1).max(4000),
   }),
-  audio_stream: z.object({
-    type: z.literal("audio_stream"),
-    audio: z.string().min(1).max(Math.ceil(MAX_AUDIO_BYTES / 3) * 4 + 4).optional(),
-    data: z.string().min(1).max(Math.ceil(MAX_AUDIO_BYTES / 3) * 4 + 4).optional(),
-    audio_base64: z
-      .string()
-      .min(1)
-      .max(Math.ceil(MAX_AUDIO_BYTES / 3) * 4 + 4)
-      .optional(),
-    mime_type: z.string().min(1).max(80).optional(),
-    mimeType: z.string().min(1).max(80).optional(),
-  }),
   confirm_transfer: z.object({
     type: z.literal("confirm_transfer"),
     request_id: z.string().trim().min(8).max(128),
+    contact_id: z.string().trim().min(8).max(128).optional(),
     to_alias: z.string().trim().min(1).max(64).optional(),
+    account_number: z.string().trim().min(5).max(40).optional(),
+    bank: z.string().trim().min(2).max(80).optional(),
     amount: z.number().finite().positive().max(1_000_000).optional(),
+    concept: z.string().trim().max(120).optional(),
   }),
   rate_interaction: z.object({
     type: z.literal("rate_interaction"),
@@ -81,8 +72,7 @@ function errorPayload(error) {
   }
   if (
     error instanceof SocketEventError ||
-    error instanceof McpGatewayError ||
-    error instanceof AudioError
+    error instanceof McpGatewayError
   ) {
     return {
       type: "error",
@@ -124,6 +114,7 @@ function buildOverview(balance) {
     available_balance: checking?.balance ?? 0,
     currency: checking?.currency || "MXN",
     credit_balance_owed: credit?.balance_owed ?? null,
+    movements: balance.recent_transactions || [],
   };
 }
 
@@ -149,7 +140,6 @@ async function createBackend({
   heartbeatMs = Number(process.env.WS_HEARTBEAT_MS || DEFAULT_HEARTBEAT_MS),
   maxPayload = Number(process.env.MAX_WS_PAYLOAD_BYTES || DEFAULT_MAX_WS_PAYLOAD),
   messageProcessor = processMessage,
-  audioTranscriber = transcribeAudio,
 } = {}) {
   await mcp.connect();
   const safeMaxPayload =
@@ -171,6 +161,7 @@ async function createBackend({
         mcp_server: health.server,
         tool_count: health.tools,
         storage: health.storage,
+        storage_reason: health.storageReason,
         persistent: health.storage === "mongodb",
         uptime_seconds: Math.floor(process.uptime()),
       });
@@ -180,14 +171,11 @@ async function createBackend({
         status: "unavailable",
         mcp: health.status,
         storage: health.storage,
+        storage_reason: health.storageReason,
         persistent: health.storage === "mongodb",
         error: error.code || "MCP_UNAVAILABLE",
       });
     }
-  });
-
-  app.get("/api/demo-users", (_request, response) => {
-    response.status(200).json({ users: getPublicDemoUsers() });
   });
 
   app.use((error, _request, response, _next) => {
@@ -296,7 +284,18 @@ async function createBackend({
     const user = getPublicDemoUsers().find(
       (candidate) => normalizeText(candidate.username) === normalizeText(event.username),
     );
-    if (!user || !passwordMatches(event.password)) {
+    const authError = !user
+      ? {
+          code: "AUTH_USER_NOT_FOUND",
+          message: "El usuario no existe.",
+        }
+      : !passwordMatches(event.password)
+        ? {
+            code: "AUTH_INVALID_PASSWORD",
+            message: "La contraseña es incorrecta.",
+          }
+        : null;
+    if (authError) {
       state.authFailures += 1;
       if (state.authFailures >= 5) {
         safeSend(ws, {
@@ -308,10 +307,21 @@ async function createBackend({
         ws.close(1008, "Authentication failed");
         return;
       }
-      throw new SocketEventError("AUTH_INVALID", "Usuario o contraseña incorrectos");
+      throw new SocketEventError(authError.code, authError.message);
     }
 
-    const overview = await getOverview(user.id);
+    let overview;
+    try {
+      overview = await getOverview(user.id);
+    } catch (error) {
+      if (error?.code === "USER_NOT_FOUND") {
+        throw new SocketEventError(
+          "AUTH_USER_NOT_FOUND",
+          "El usuario no existe.",
+        );
+      }
+      throw error;
+    }
     state.user = user;
     state.authFailures = 0;
     addUserSocket(user.id, ws);
@@ -327,7 +337,6 @@ async function createBackend({
     state.pendingTransfer = null;
     state.interactionIds.clear();
     safeSend(ws, { type: "auth_logged_out" });
-    safeSend(ws, { type: "demo_users", users: getPublicDemoUsers(), reason: "logged_out" });
   }
 
   async function handleUserText(ws, state, text) {
@@ -351,8 +360,12 @@ async function createBackend({
         };
         pendingTransfer = {
           requestId,
+          contactId: ui.props.contact_id,
           toAlias: ui.props.to_alias,
+          accountNumber: ui.props.account_number,
+          bank: ui.props.bank,
           amount: ui.props.amount,
+          concept: ui.props.concept || "",
           status: "pending",
           transaction: null,
           expiresAt: Date.now() + PENDING_TRANSFER_TTL_MS,
@@ -363,31 +376,6 @@ async function createBackend({
       safeSend(ws, persistedUI);
     } finally {
       safeSend(ws, { type: "assistant_status", status: "idle" });
-    }
-  }
-
-  async function handleAudio(ws, state, event) {
-    requireAuthentication(state);
-    const data = event.audio_base64 || event.audio || event.data;
-    const mimeType = event.mime_type || event.mimeType;
-    if (!data || !mimeType) {
-      throw new SocketEventError(
-        "INVALID_PAYLOAD",
-        "audio_stream requiere audio y mime_type",
-      );
-    }
-    safeSend(ws, {
-      type: "assistant_status",
-      status: "transcribing",
-      message: "Transcribiendo tu voz…",
-    });
-    try {
-      const text = await audioTranscriber({ data, mimeType });
-      safeSend(ws, { type: "transcription", text });
-      await handleUserText(ws, state, text);
-    } catch (error) {
-      safeSend(ws, { type: "assistant_status", status: "idle" });
-      throw error;
     }
   }
 
@@ -410,17 +398,27 @@ async function createBackend({
       state.pendingTransfer = null;
       throw new SocketEventError("TRANSFER_EXPIRED", "La transferencia pendiente expiró");
     }
-    if (
-      (event.to_alias && normalizeText(event.to_alias) !== normalizeText(pending.toAlias)) ||
-      (event.amount !== undefined &&
-        Math.round(event.amount * 100) !== Math.round(pending.amount * 100))
-    ) {
+    const toAlias = event.to_alias || pending.toAlias;
+    const amount = event.amount ?? pending.amount;
+    if (!toAlias || !Number.isFinite(amount) || amount <= 0) {
       throw new SocketEventError(
-        "TRANSFER_CONFIRMATION_MISMATCH",
-        "Los datos confirmados no coinciden con el formulario",
-        false,
+        "TRANSFER_FIELDS_REQUIRED",
+        "Completa la persona y el monto antes de confirmar",
       );
     }
+    const recipientChanged =
+      normalizeText(toAlias) !== normalizeText(pending.toAlias || "");
+    pending.toAlias = toAlias.trim();
+    pending.contactId =
+      event.contact_id || (recipientChanged ? "" : pending.contactId) || "";
+    pending.accountNumber =
+      event.account_number ||
+      (recipientChanged ? "" : pending.accountNumber) ||
+      "";
+    pending.bank =
+      event.bank || (recipientChanged ? "" : pending.bank) || "";
+    pending.amount = Math.round(amount * 100) / 100;
+    pending.concept = event.concept ?? pending.concept ?? "";
     if (pending.status === "processing") {
       throw new SocketEventError(
         "TRANSFER_IN_PROGRESS",
@@ -439,7 +437,11 @@ async function createBackend({
   }
 
   async function refreshParticipants(state, transaction) {
-    const participantIds = [...new Set([transaction.from_user_id, transaction.to_user_id])];
+    const participantIds = [
+      ...new Set(
+        [transaction.from_user_id, transaction.to_user_id].filter(Boolean),
+      ),
+    ];
     const overviews = await Promise.allSettled(
       participantIds.map(async (userId) => ({ userId, overview: await getOverview(userId) })),
     );
@@ -457,22 +459,24 @@ async function createBackend({
     const timestamp = new Date().toISOString();
     const title = "Transferencia recibida";
     const body = `${state.user.name} te transfirió $${transaction.amount.toFixed(2)} MXN`;
-    broadcastToUser(transaction.to_user_id, {
-      type: "notification",
-      title,
-      body,
-      timestamp,
-      notification: {
-        kind: "transfer_received",
+    if (transaction.to_user_id) {
+      broadcastToUser(transaction.to_user_id, {
+        type: "notification",
         title,
-        message: body,
+        body,
         timestamp,
-        amount: transaction.amount,
-        currency: transaction.currency,
-        from_user: state.user,
-        transaction_id: transaction.transaction_id,
-      },
-    });
+        notification: {
+          kind: "transfer_received",
+          title,
+          message: body,
+          timestamp,
+          amount: transaction.amount,
+          currency: transaction.currency,
+          from_user: state.user,
+          transaction_id: transaction.transaction_id,
+        },
+      });
+    }
   }
 
   async function handleTransferConfirmation(ws, state, event) {
@@ -491,6 +495,9 @@ async function createBackend({
             fromUserId: state.user.id,
             toAlias: pending.toAlias,
             amount: pending.amount,
+            concept: pending.concept,
+            contactId: pending.contactId || undefined,
+            accountNumber: pending.accountNumber || undefined,
             requestId: pending.requestId,
           });
           pending.status = "executed";
@@ -559,8 +566,6 @@ async function createBackend({
       case "user_message":
         requireAuthentication(state);
         return handleUserText(ws, state, event.text);
-      case "audio_stream":
-        return handleAudio(ws, state, event);
       case "confirm_transfer":
         return handleTransferConfirmation(ws, state, event);
       case "rate_interaction":
@@ -582,7 +587,6 @@ async function createBackend({
       queue: Promise.resolve(),
     };
     socketStates.set(ws, state);
-    safeSend(ws, { type: "demo_users", users: getPublicDemoUsers() });
 
     ws.on("pong", () => {
       state.isAlive = true;
@@ -593,7 +597,7 @@ async function createBackend({
           if (isBinary) {
             throw new SocketEventError(
               "BINARY_NOT_ALLOWED",
-              "Envía eventos JSON; el audio debe ir en base64",
+              "Solo se aceptan eventos JSON de texto",
             );
           }
           checkRateLimit(state);

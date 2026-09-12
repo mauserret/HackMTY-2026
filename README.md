@@ -16,8 +16,8 @@ Node.js / Express / ws
 Subproceso MCP ── mcpTools ── MongoDB Atlas
 ```
 
-- `hackmty-app/`: login, overview, conversación, renderizador A2UI, voz,
-  notificaciones y rating.
+- `hackmty-app/`: login, navegación inferior, saldos, movimientos, chat
+  generativo, métricas, voz nativa, notificaciones y rating.
 - `hackmty-backend/`: autenticación, hub WebSocket, orquestador Gemini, cliente
   MCP, servidor MCP, datos y auditoría.
 - `DECISIONES_DE_DISENO.md`: decisiones y discrepancias resueltas durante la
@@ -60,26 +60,38 @@ explícita:
 EXPO_PUBLIC_WS_URL=ws://192.168.1.50:4000 npm start
 ```
 
-Usuarios: `Mau`, `Timo`, `Esteban`, `Brau`. Contraseña de demo: `1234`.
+El formulario no muestra usuarios ni credenciales predeterminadas. Para probar
+el reconocimiento de voz se necesita una development build:
+
+```bash
+npm run android # o: npm run ios
+npm run start:dev
+```
+
+El módulo de voz no está incluido en Expo Go; allí se omite de forma segura.
 
 ## Recorrido recomendado
 
-1. Inicia como `Mau`.
-2. Pregunta: **“¿Cuánto dinero tengo?”**
-3. Pide: **“Mándale una feria de 1,500 a Timo.”**
-4. Revisa el formulario generado y confirma.
-5. Observa el comprobante, el nuevo saldo y la notificación en una sesión
+1. Inicia con un usuario existente del fixture.
+2. Revisa el saldo y los movimientos en **Inicio**.
+3. En **Chat**, pregunta: **“¿Cuánto dinero tengo?”**
+4. Pide: **“Muéstrame una gráfica de mis movimientos.”**
+5. Escribe **“Transfiere $500 a Timo por la cena”**, revisa los campos
+   precargados, modifica alguno y confirma.
+6. Observa el comprobante, el nuevo saldo y la notificación en una sesión
    conectada como `Timo`.
-6. Mantén presionada una estrella para registrar una media estrella.
-7. Prueba: **“Quiero pagar menos intereses de mi tarjeta.”**
+7. Abre **Estadísticas** para ver las métricas actualizadas.
+8. Mantén presionada una estrella para registrar una media estrella.
 
 ## Variables principales
 
 Consulta `hackmty-backend/.env.example` para la lista completa:
 
-- `MONGODB_URI`: conexión Atlas; si falta se activa el modo efímero.
+- `MONGODB_URI`: conexión Atlas; si falta o falla puede activarse el modo
+  efímero.
+- `MONGODB_REQUIRED`: impide fallback a memoria cuando es `true`.
 - `MONGODB_DB_NAME`: por defecto `hackmty_db`.
-- `GEMINI_API_KEY` o `LLM_API_KEY`: habilita Gemini y transcripción.
+- `GEMINI_API_KEY` o `LLM_API_KEY`: habilita Gemini para el chat.
 - `GEMINI_MODEL`: por defecto `gemini-3.6-flash`.
 - `DEMO_PASSWORD`: por defecto `1234`.
 - `PORT`: por defecto `4000`.

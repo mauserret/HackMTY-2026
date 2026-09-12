@@ -75,35 +75,45 @@ test("WebSocket completa transferencia confirmada, rating y notificación", asyn
     mcp,
     messageProcessor: (userId, text, gateway) =>
       processMessage(userId, text, gateway, { forceLocal: true }),
-    audioTranscriber: async ({ data, mimeType }) => {
-      assert.equal(data, "Zm9v");
-      assert.equal(mimeType, "audio/mp4");
-      return "¿Cuál es mi saldo?";
-    },
   });
   const address = await backend.listen(0, "127.0.0.1");
   const url = `ws://127.0.0.1:${address.port}`;
+  let sender;
+  let recipient;
+  t.after(async () => {
+    sender?.ws.terminate();
+    recipient?.ws.terminate();
+    clearMemory("u1");
+    clearMemory("u2");
+    await backend.close();
+  });
   const healthResponse = await fetch(
     `http://127.0.0.1:${address.port}/health`,
   );
   const health = await healthResponse.json();
   assert.equal(healthResponse.status, 200);
-  assert.equal(health.tool_count, 6);
+  assert.equal(health.tool_count, 12);
   assert.equal(health.storage, "memory");
+  assert.equal(health.storage_reason, "MONGODB_URI_MISSING");
+  assert.equal(
+    (
+      await fetch(`http://127.0.0.1:${address.port}/api/demo-users`)
+    ).status,
+    404,
+  );
 
-  const sender = await connectClient(url);
-  const recipient = await connectClient(url);
+  sender = await connectClient(url);
+  recipient = await connectClient(url);
 
-  t.after(async () => {
-    sender.ws.terminate();
-    recipient.ws.terminate();
-    clearMemory("u1");
-    clearMemory("u2");
-    await backend.close();
+  send(sender.ws, {
+    type: "auth_login",
+    username: "usuario-inexistente",
+    password: "1234",
   });
-
-  await sender.collector.next((message) => message.type === "demo_users");
-  await recipient.collector.next((message) => message.type === "demo_users");
+  const unknownUser = await sender.collector.next(
+    (message) => message.code === "AUTH_USER_NOT_FOUND",
+  );
+  assert.equal(unknownUser.message, "El usuario no existe.");
 
   send(sender.ws, {
     type: "auth_login",
@@ -123,32 +133,44 @@ test("WebSocket completa transferencia confirmada, rating y notificación", asyn
   assert.equal(senderAuth.overview.available_balance, 24500);
 
   send(sender.ws, {
-    type: "audio_stream",
-    audio_base64: "Zm9v",
-    mime_type: "audio/mp4",
-    duration_ms: 500,
+    type: "user_message",
+    text: "¿Cuál es mi saldo?",
   });
-  const transcription = await sender.collector.next(
-    (message) => message.type === "transcription",
-  );
-  assert.equal(transcription.text, "¿Cuál es mi saldo?");
-  const spokenBalance = await sender.collector.next(
+  const currentBalance = await sender.collector.next(
     (message) =>
       message.type === "ui" && message.component === "balance_card",
   );
-  assert.equal(spokenBalance.props.user.id, "u1");
+  assert.equal(currentBalance.props.user.id, "u1");
+
+  send(sender.ws, {
+    type: "user_message",
+    text: "Muéstrame una gráfica de mis movimientos",
+  });
+  const chart = await sender.collector.next(
+    (message) =>
+      message.type === "ui" && message.component === "financial_chart",
+  );
+  assert.equal(chart.props.chartType, "bar");
+  assert.equal(Array.isArray(chart.props.data), true);
 
   send(sender.ws, {
     type: "user_message",
     user_id: "u4",
-    text: "Mándale $1,500 pesos a Timoteo",
+    text: "Mándale $1,500 pesos a Braulio por la cena",
   });
   const form = await sender.collector.next(
     (message) =>
       message.type === "ui" && message.component === "transfer_form",
   );
-  assert.equal(form.props.to_alias, "Timo");
+  assert.equal(form.props.to_alias, "Brau");
   assert.equal(form.props.amount, 1500);
+  assert.deepEqual(form.props.initialValues, {
+    recipient: "Braulio Garcia",
+    amount: "1500",
+    concept: "Cena",
+    accountNumber: "072180000004125000",
+    bank: "Banorte",
+  });
   assert.equal(form.props.requires_confirmation, true);
   assert.equal(form.props.request_id.length > 8, true);
   assert.equal(typeof form.interaction_id, "string");
@@ -166,14 +188,19 @@ test("WebSocket completa transferencia confirmada, rating y notificación", asyn
   send(sender.ws, {
     type: "confirm_transfer",
     request_id: form.props.request_id,
+    contact_id: "contact_u1_u2",
     to_alias: "Timo",
-    amount: 1500,
+    account_number: "072180000002083000",
+    bank: "Banorte",
+    amount: 1400,
+    concept: "Comida",
   });
   const receipt = await sender.collector.next(
     (message) =>
       message.type === "ui" && message.component === "transfer_success",
   );
-  assert.equal(receipt.props.amount, 1500);
+  assert.equal(receipt.props.amount, 1400);
+  assert.equal(receipt.props.concept, "Comida");
   assert.equal(receipt.props.to_user_id, "u2");
   assert.equal(typeof receipt.interaction_id, "string");
 
@@ -183,14 +210,16 @@ test("WebSocket completa transferencia confirmada, rating y notificación", asyn
   const recipientOverview = await recipient.collector.next(
     (message) => message.type === "overview_update",
   );
-  assert.equal(senderOverview.overview.available_balance, 23000);
-  assert.equal(recipientOverview.overview.available_balance, 9800);
+  assert.equal(senderOverview.overview.available_balance, 23100);
+  assert.equal(recipientOverview.overview.available_balance, 9700);
+  assert.equal(senderOverview.overview.movements[0].direction, "outgoing");
+  assert.equal(recipientOverview.overview.movements[0].direction, "incoming");
 
   const notification = await recipient.collector.next(
     (message) => message.type === "notification",
   );
   assert.equal(notification.title, "Transferencia recibida");
-  assert.match(notification.body, /Mauricio Rey/);
+  assert.match(notification.body, /Mauricio Hernández/);
   assert.equal(typeof notification.timestamp, "string");
 
   send(sender.ws, {
