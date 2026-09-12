@@ -1,0 +1,16 @@
+{
+  "name": "hackmty-backend",
+  "version": "1.0.0",
+  "description": "Backend del reto Banorte x Tec — conexión a MongoDB Atlas y tools base para el servidor MCP.",
+  "main": "server.js",
+  "scripts": {
+    "seed": "node seed.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@google/genai": "^2.0.0",
+    "dotenv": "^16.4.5",
+    "mongodb": "^6.9.0",
+    "ws": "^8.18.0"
+  }
+}
