@@ -288,6 +288,25 @@ test("el fallback consulta MCP y nunca transfiere en el primer turno", async (t)
   assert.deepEqual(after.accounts, before.accounts);
 });
 
+test("si pide transferir todo el dinero, el monto es el saldo disponible", async (t) => {
+  const mcp = await memoryGateway(t);
+  t.after(() => clearMemory("u1"));
+  const balance = await mcp.callTool("getBalance", { userId: "u1" });
+  const checking = balance.accounts.find((account) => account.type === "checking");
+  const ui = await localFallback(
+    "u1",
+    "Transfiere todo mi dinero a Timo por liquidación",
+    mcp,
+  );
+
+  assert.equal(ui.component, "transfer_form");
+  assert.equal(ui.props.to_alias, "Timo");
+  assert.equal(ui.props.amount, checking.balance);
+  assert.equal(ui.props.initialValues.amount, String(checking.balance));
+  assert.equal(ui.props.concept, "Liquidación");
+  assert.equal(ui.props.missing_fields.includes("amount"), false);
+});
+
 test("precarga persona, monto y concepto aunque la persona no sea un contacto", async (t) => {
   const mcp = await memoryGateway(t);
   t.after(() => clearMemory("u1"));
