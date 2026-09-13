@@ -3,6 +3,9 @@ import { NavLink, Outlet } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthContext";
 
+// Importación del logotipo real de Banorte para el admin
+import logoApp from "../assets/logo.png";
+
 const links = [
   { to: "/", label: "Resumen", icon: "⌂", end: true },
   { to: "/users", label: "Usuarios", icon: "◎" },
@@ -17,9 +20,18 @@ export default function AdminLayout() {
   return (
     <div className="admin-shell">
       <aside className={`sidebar ${menuOpen ? "sidebar--open" : ""}`}>
-        <div className="brand">
-          <span className="brand__name">BANORTE</span>
-          <span className="brand__area">ADMIN</span>
+        {/* LOGOTIPO REAL EN LA BARRA LATERAL */}
+        <div className="brand" style={{ padding: "20px 24px" }}>
+          <img 
+            src={logoApp} 
+            alt="Banorte Logo" 
+            style={{ 
+              width: "130px", 
+              height: "auto", 
+              objectFit: "contain",
+              filter: "brightness(0) invert(1)" // Vuelve el logo blanco puro sobre el fondo rojo de la barra
+            }} 
+          />
         </div>
 
         <nav className="nav" aria-label="Navegación administrativa">
