@@ -18,7 +18,32 @@
       "adaptiveIcon": {
         "foregroundImage": "./src/assets/logo_app.png",
         "backgroundColor": "#EB0029"
-      }
-    }
+      },
+      "usesCleartextTraffic": true
+    },
+    "plugins": [
+      "expo-audio",
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./src/assets/fonts/Gotham-Bold.otf",
+            "./src/assets/fonts/Gotham-Black.otf"
+          ]
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Banorte necesita el micrófono para dictar tus solicitudes.",
+          "speechRecognitionPermission": "Banorte necesita reconocimiento de voz para convertir tu dictado en texto.",
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox",
+            "com.google.android.tts",
+            "com.google.android.as"
+          ]
+        }
+      ]
+    ]
   }
 }

@@ -12,11 +12,13 @@ import { useBanking } from '../context/BankingContext';
 export default function LoginScreen({ navigation }) {
   const { authError, authLoading, login } = useBanking();
 
-  // Carga de tipografías Gotham
-  const [fontsLoaded] = useFonts({
-    'Gotham-Bold': require('../assets/fonts/Gotham Bold.otf'),
-    'Gotham-Black': require('../assets/fonts/Gotham Black.otf'),
+  // Carga de tipografías Gotham (nombres sin espacios para builds Android release)
+  const [fontsLoaded, fontError] = useFonts({
+    'Gotham-Bold': require('../assets/fonts/Gotham-Bold.otf'),
+    'Gotham-Black': require('../assets/fonts/Gotham-Black.otf'),
   });
+  const [fontsTimedOut, setFontsTimedOut] = useState(false);
+  const fontsReady = fontsLoaded || Boolean(fontError) || fontsTimedOut;
 
   const [usuario, setUsuario] = useState('');
   const [password, setPassword] = useState('');
@@ -32,20 +34,36 @@ export default function LoginScreen({ navigation }) {
   const slideUpAnim = useRef(new Animated.Value(20)).current;
   const loginAnim = useRef(new Animated.Value(0)).current;
 
+  useEffect(() => {
+    if (fontsReady) return undefined;
+    const timeout = setTimeout(() => setFontsTimedOut(true), 4000);
+    return () => clearTimeout(timeout);
+  }, [fontsReady]);
+
   // 1. SPLASH SCREEN INICIAL ULTRA RÁPIDO (0.6 segundos)
   useEffect(() => {
-    if (fontsLoaded) {
-      setTimeout(() => {
-        Animated.sequence([
-          Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
-          Animated.parallel([
-            Animated.timing(contentAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.exp), useNativeDriver: true }),
-            Animated.timing(slideUpAnim, { toValue: 0, duration: 400, easing: Easing.out(Easing.exp), useNativeDriver: true })
-          ])
-        ]).start(() => setIsSplashLoading(false));
-      }, 600); 
-    }
-  }, [fontsLoaded]);
+    if (!fontsReady) return;
+
+    const start = setTimeout(() => {
+      Animated.sequence([
+        Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
+        Animated.parallel([
+          Animated.timing(contentAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.exp), useNativeDriver: true }),
+          Animated.timing(slideUpAnim, { toValue: 0, duration: 400, easing: Easing.out(Easing.exp), useNativeDriver: true })
+        ])
+      ]).start(({ finished }) => {
+        if (finished) setIsSplashLoading(false);
+      });
+    }, 600);
+
+    // Evita quedar atrapado en splash si la animación no completa (APK release).
+    const safety = setTimeout(() => setIsSplashLoading(false), 2500);
+
+    return () => {
+      clearTimeout(start);
+      clearTimeout(safety);
+    };
+  }, [fontsReady, fadeAnim, contentAnim, slideUpAnim]);
 
   // 2. PANTALLA POST-LOGIN
   useEffect(() => {
@@ -54,7 +72,7 @@ export default function LoginScreen({ navigation }) {
     } else {
       Animated.timing(loginAnim, { toValue: 0, duration: 400, useNativeDriver: true }).start();
     }
-  }, [authLoading]);
+  }, [authLoading, loginAnim]);
 
   const submit = () => {
     if (usuario && password) {
@@ -62,7 +80,7 @@ export default function LoginScreen({ navigation }) {
     }
   };
 
-  if (!fontsLoaded) {
+  if (!fontsReady) {
     return (
       <View style={styles.loadingScreen}>
         <ActivityIndicator size="large" color="#EB0029" />

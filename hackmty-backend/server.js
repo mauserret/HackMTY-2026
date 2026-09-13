@@ -1,6 +1,10 @@
 "use strict";
 
-require("dotenv").config({ path: require("node:path").join(__dirname, ".env") });
+require("dotenv").config({
+  path: require("node:path").join(__dirname, ".env"),
+  // Permite que el .env local gane sobre variables vacías heredadas del shell.
+  override: true,
+});
 
 const { createHash, randomUUID, timingSafeEqual } = require("node:crypto");
 const http = require("node:http");
@@ -11,6 +15,7 @@ const { createAdminRouter } = require("./adminRoutes");
 const { getPublicDemoUsers } = require("./demoData");
 const { clearMemory, contactsUI, normalizeText, processMessage } = require("./llm");
 const { McpGateway, McpGatewayError } = require("./mcpClient");
+const { createTtsRouter } = require("./tts");
 
 const DEFAULT_PORT = 4000;
 const DEFAULT_MAX_WS_PAYLOAD = 256 * 1024;
@@ -218,6 +223,7 @@ async function createBackend({
   });
 
   app.use("/api/admin", createAdminRouter({ mcp }));
+  app.use("/api/tts", createTtsRouter());
 
   app.use((error, _request, response, _next) => {
     const status = error?.status === 400 || error?.type === "entity.parse.failed" ? 400 : 500;
@@ -814,7 +820,12 @@ async function main() {
     throw error;
   }
   const port = typeof address === "object" && address ? address.port : DEFAULT_PORT;
-  console.log(`BanAI backend listo en http://localhost:${port}; storage=${backend.mcp.storage}`);
+  const tts = require("./tts").getElevenLabsConfig();
+  console.log(
+    `BanAI backend listo en http://localhost:${port}; storage=${backend.mcp.storage}; elevenlabs=${
+      tts.configured ? "on" : "off"
+    }`,
+  );
 
   let shuttingDown = false;
   const shutdown = async () => {

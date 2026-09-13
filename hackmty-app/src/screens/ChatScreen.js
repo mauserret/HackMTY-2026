@@ -18,6 +18,7 @@ import Composer from "../components/Composer";
 import DynamicUI from "../components/DynamicUI";
 import NotificationBanner from "../components/NotificationBanner";
 import LiveVoiceModal from "../components/LiveVoiceModal";
+import SpeakButton from "../components/SpeakButton";
 import { useBanking } from "../context/BankingContext";
 import { colors, fontFamily, radii, spacing } from "../theme";
 
@@ -71,8 +72,11 @@ export default function ChatScreen() {
 
       return (
         <View style={styles.assistantMessageRow}>
-          <View style={styles.agentMarker}>
-            <Ionicons name="sparkles" size={13} color={colors.surface} />
+          <View style={styles.assistantSidebar}>
+            <View style={styles.agentMarker}>
+              <Ionicons name="sparkles" size={13} color={colors.surface} />
+            </View>
+            <SpeakButton message={item.data} messageId={item.id} />
           </View>
           <View style={styles.generatedContent}>
             <DynamicUI
@@ -198,6 +202,10 @@ export default function ChatScreen() {
       <LiveVoiceModal
         visible={isLiveModalVisible}
         onClose={() => setIsLiveModalVisible(false)}
+        onTranscript={(transcript) => {
+          setIsLiveModalVisible(false);
+          sendMessage(transcript, { inputMode: "voice" });
+        }}
         assistantStatus={assistantStatus}
       />
 
@@ -391,6 +399,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "flex-start",
   },
+  assistantSidebar: {
+    width: 26,
+    alignItems: "center",
+    marginRight: 7,
+  },
   agentMarker: {
     width: 26,
     height: 26,
@@ -398,7 +411,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#EB0029',
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 7,
     marginTop: 3,
   },
   generatedContent: {

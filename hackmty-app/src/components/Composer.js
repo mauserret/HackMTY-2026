@@ -54,11 +54,16 @@ export default function Composer({
   const downloadAttemptedRef = useRef(false);
 
   useSpeechRecognitionEvent("start", () => {
+    if (onPressVoice) return;
     setRecognizing(true);
     setError("");
   });
-  useSpeechRecognitionEvent("end", () => setRecognizing(false));
+  useSpeechRecognitionEvent("end", () => {
+    if (onPressVoice) return;
+    setRecognizing(false);
+  });
   useSpeechRecognitionEvent("result", (event) => {
+    if (onPressVoice) return;
     const transcript = event.results[0]?.transcript?.trim();
     if (transcript) {
       setText(transcript);
@@ -66,6 +71,7 @@ export default function Composer({
     }
   });
   useSpeechRecognitionEvent("error", (event) => {
+    if (onPressVoice) return;
     setRecognizing(false);
     if (event.error === "aborted") return;
     const languageUnavailable =

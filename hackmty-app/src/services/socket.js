@@ -24,7 +24,16 @@ function resolveServerUrl() {
   return `ws://${host}:4000`;
 }
 
+export function getServerUrl() {
+  return resolveServerUrl();
+}
+
+export function getHttpServerUrl() {
+  return resolveServerUrl().replace(/^ws/i, "http").replace(/^wss/i, "https");
+}
+
 export const SERVER_URL = resolveServerUrl();
+export const HTTP_SERVER_URL = getHttpServerUrl();
 
 function emitConnection(nextState) {
   connectionState = nextState;
