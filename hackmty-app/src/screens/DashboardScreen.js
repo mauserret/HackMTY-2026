@@ -22,10 +22,21 @@ import {
 
 export default function DashboardScreen({ navigation }) {
   const { overview, session, logout } = useBanking();
+  const accounts = overview?.accounts || [];
+  const checking =
+    accounts.find((account) => account.type === "checking") || null;
+  const credit =
+    accounts.find((account) => account.type === "credit_card") || null;
   const movements = overview?.movements || [];
-  
-  const userName = session?.name || "Braulio Garcia";
-  const balance = overview?.balance ?? 237.00;
+
+  const userName = session?.name || overview?.user?.name || "Usuario";
+  const balance = Number(
+    overview?.available_balance ?? checking?.balance ?? 0,
+  );
+  const creditBalance = Number(
+    overview?.credit_balance_owed ?? credit?.balance_owed ?? credit?.balance ?? 0,
+  );
+  const creditLimit = Number(credit?.credit_limit || 0);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
@@ -81,9 +92,11 @@ export default function DashboardScreen({ navigation }) {
               <Feather name="briefcase" size={18} color="#FFFFFF" />
             </View>
             <View>
-              <Text style={styles.accountCardType}>Cuenta Banorte</Text>
+              <Text style={styles.accountCardType}>
+                {checking?.name || "Cuenta Banorte"}
+              </Text>
               <Text style={styles.accountCardBalance}>
-                {formatMoney ? formatMoney(balance, "MXN") : `$${balance}.00`}
+                {formatMoney(balance, overview?.currency || "MXN")}
               </Text>
               <Text style={styles.accountCardSubtitle}>Saldo disponible</Text>
             </View>
@@ -96,7 +109,23 @@ export default function DashboardScreen({ navigation }) {
               <Text style={styles.cardTypeLabel}>CRÉDITO</Text>
             </View>
             <View style={styles.cardBodySecondary}>
-              <Text style={styles.noCardText}>Sin tarjeta asociada</Text>
+              {credit ? (
+                <>
+                  <Text style={styles.accountCardTypeDark}>
+                    {credit.name || "Tarjeta Banorte"}
+                  </Text>
+                  <Text style={styles.creditBalance}>
+                    {formatMoney(creditBalance, credit.currency || "MXN")}
+                  </Text>
+                  <Text style={styles.noCardText}>
+                    {creditLimit
+                      ? `Límite ${formatMoney(creditLimit, credit.currency || "MXN")}`
+                      : "Saldo utilizado"}
+                  </Text>
+                </>
+              ) : (
+                <Text style={styles.noCardText}>Sin tarjeta asociada</Text>
+              )}
             </View>
           </View>
         </ScrollView>
@@ -108,7 +137,7 @@ export default function DashboardScreen({ navigation }) {
             <Text style={styles.sectionTitle}>Movimientos</Text>
           </View>
           <View style={styles.countBadge}>
-            <Text style={styles.countText}>{movements.length > 0 ? movements.length : 8}</Text>
+            <Text style={styles.countText}>{movements.length}</Text>
           </View>
         </View>
 
@@ -122,14 +151,9 @@ export default function DashboardScreen({ navigation }) {
               />
             ))
           ) : (
-            <>
-              <MovementRow movement={{ direction: "outgoing", counterparty: "Mau", created_at: "2026-09-12T21:33:00Z", amount: 2.00, currency: "MXN" }} divided={true} />
-              <MovementRow movement={{ direction: "outgoing", counterparty: "Mau", created_at: "2026-09-12T21:31:00Z", amount: 3.00, currency: "MXN" }} divided={true} />
-              <MovementRow movement={{ direction: "outgoing", counterparty: "Mau", created_at: "2026-09-12T21:31:00Z", amount: 1.00, currency: "MXN" }} divided={true} />
-              <MovementRow movement={{ direction: "outgoing", counterparty: "Mau", created_at: "2026-09-12T21:31:00Z", amount: 2.00, currency: "MXN" }} divided={true} />
-              <MovementRow movement={{ direction: "outgoing", counterparty: "Mau", created_at: "2026-09-12T21:30:00Z", amount: 2.00, currency: "MXN" }} divided={true} />
-              <MovementRow movement={{ direction: "outgoing", counterparty: "Timo", created_at: "2026-09-12T21:29:00Z", amount: 1.00, currency: "MXN" }} divided={false} />
-            </>
+            <Text style={styles.emptyMovements}>
+              Aún no hay movimientos recientes.
+            </Text>
           )}
         </View>
       </ScrollView>
@@ -346,6 +370,24 @@ const styles = StyleSheet.create({
   noCardText: {
     color: '#7F8C8D',
     fontSize: 12,
+  },
+  accountCardTypeDark: {
+    color: '#5B6670',
+    fontSize: 11,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  creditBalance: {
+    color: '#323648',
+    fontFamily: 'Gotham-Bold',
+    fontSize: 22,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  emptyMovements: {
+    color: '#7F8C8D',
+    fontSize: 13,
+    paddingVertical: 8,
   },
   sectionHeading: {
     paddingHorizontal: spacing.md,
