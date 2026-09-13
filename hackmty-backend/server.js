@@ -8,7 +8,7 @@ const express = require("express");
 const { WebSocket, WebSocketServer } = require("ws");
 const { z } = require("zod");
 const { getPublicDemoUsers } = require("./demoData");
-const { clearMemory, normalizeText, processMessage } = require("./llm");
+const { clearMemory, contactsUI, normalizeText, processMessage } = require("./llm");
 const { McpGateway, McpGatewayError } = require("./mcpClient");
 
 const DEFAULT_PORT = 4000;
@@ -59,6 +59,23 @@ const eventSchemas = Object.freeze({
       (value) => (typeof value === "string" && !value.trim() ? undefined : value),
       z.string().trim().min(2).max(80).optional(),
     ),
+  }),
+  update_registered_account: z.object({
+    type: z.literal("update_registered_account"),
+    contact_id: z.string().trim().min(8).max(128),
+    name: z.string().trim().min(2).max(64).optional(),
+    clabe: z.preprocess(
+      (value) => (typeof value === "string" && !value.trim() ? undefined : value),
+      z.string().trim().min(10).max(18).optional(),
+    ),
+    bank: z.preprocess(
+      (value) => (typeof value === "string" && !value.trim() ? undefined : value),
+      z.string().trim().min(2).max(80).optional(),
+    ),
+  }),
+  delete_registered_account: z.object({
+    type: z.literal("delete_registered_account"),
+    contact_id: z.string().trim().min(8).max(128),
   }),
   rate_interaction: z.object({
     type: z.literal("rate_interaction"),
@@ -604,6 +621,47 @@ async function createBackend({
     }
   }
 
+  async function handleUpdateRegisteredAccount(ws, state, event) {
+    requireAuthentication(state);
+    const result = await mcp.callTool("update_contact", {
+      userId: state.user.id,
+      contact_id: event.contact_id,
+      name: event.name,
+      clabe: event.clabe,
+      bank: event.bank,
+    });
+    safeSend(ws, {
+      type: "registered_account_updated",
+      contact: result.contact,
+    });
+    const refreshed = await contactsUI(state.user.id, mcp);
+    const persistedUI = await persistUI(
+      state,
+      `Actualizar cuenta ${event.contact_id}`,
+      refreshed,
+    );
+    safeSend(ws, persistedUI);
+  }
+
+  async function handleDeleteRegisteredAccount(ws, state, event) {
+    requireAuthentication(state);
+    const result = await mcp.callTool("delete_contact", {
+      userId: state.user.id,
+      contact_id: event.contact_id,
+    });
+    safeSend(ws, {
+      type: "registered_account_deleted",
+      ...result,
+    });
+    const refreshed = await contactsUI(state.user.id, mcp);
+    const persistedUI = await persistUI(
+      state,
+      `Eliminar cuenta ${event.contact_id}`,
+      refreshed,
+    );
+    safeSend(ws, persistedUI);
+  }
+
   async function handleRating(ws, state, event) {
     requireAuthentication(state);
     if (!state.interactionIds.has(event.interaction_id)) {
@@ -633,6 +691,10 @@ async function createBackend({
         return handleTransferConfirmation(ws, state, event);
       case "confirm_register_account":
         return handleRegisterAccount(ws, state, event);
+      case "update_registered_account":
+        return handleUpdateRegisteredAccount(ws, state, event);
+      case "delete_registered_account":
+        return handleDeleteRegisteredAccount(ws, state, event);
       case "rate_interaction":
         return handleRating(ws, state, event);
       default:

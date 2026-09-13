@@ -57,25 +57,50 @@ test("las nuevas tools MCP administran contactos, cuentas y analítica", async (
     name: "Carlitos",
   });
   assert.equal(updatedContact.contact.name, "Carlitos");
+  assert.equal(updatedContact.contact.holder_name, "");
+
+  const mauBefore = await mcp.callTool("getBalance", { userId: "u1" });
+  const renamedMau = await mcp.callTool("update_contact", {
+    userId: "u2",
+    contact_id: "contact_u2_u1",
+    name: "MiMau",
+  });
+  assert.equal(renamedMau.contact.name, "MiMau");
+  assert.equal(renamedMau.contact.holder_name, "Mauricio Hernández");
+  const mauAfter = await mcp.callTool("getBalance", { userId: "u1" });
+  assert.equal(mauAfter.user.name, mauBefore.user.name);
+
+  const deleted = await mcp.callTool("delete_contact", {
+    userId: "u2",
+    contact_id: updatedContact.contact.id,
+  });
+  assert.equal(deleted.deleted, true);
+  const remaining = await mcp.callTool("get_contacts", { userId: "u2" });
+  assert.equal(
+    remaining.contacts.some(
+      (contact) => contact.id === updatedContact.contact.id,
+    ),
+    false,
+  );
+
   const externalTransfer = await mcp.callTool("createTransaction", {
     fromUserId: "u2",
-    contactId: updatedContact.contact.id,
-    registeredName: "Carlitos",
-    toAlias: "Carlitos",
-    clabe: updatedContact.contact.clabe,
+    contactId: "contact_u2_u1",
+    registeredName: "MiMau",
+    toAlias: "MiMau",
+    clabe: "072180000001245678",
     amount: 50,
     concept: "Prueba",
   });
-  assert.equal(externalTransfer.to_user_id, null);
-  assert.equal(externalTransfer.clabe, "012180001234567890");
-  assert.equal(externalTransfer.registered_name, "Carlitos");
+  assert.equal(externalTransfer.to_user_id, "u1");
+  assert.equal(externalTransfer.registered_name, "MiMau");
 
   await assert.rejects(
     () =>
       mcp.callTool("createTransaction", {
         fromUserId: "u2",
-        registeredName: "Carlitos",
-        toAlias: "Carlitos",
+        registeredName: "MiMau",
+        toAlias: "MiMau",
         clabe: "000000000000000000",
         amount: 10,
         concept: "Falla",
@@ -309,14 +334,21 @@ test("genera pastel, línea, resumen y detalle transaccional", async (t) => {
   );
   assert.equal(pie.component, "financial_chart");
   assert.equal(pie.props.chartType, "pie");
-  assert.equal(pie.props.data.length > 0, true);
+  assert.deepEqual(
+    pie.props.data.map((item) => item.label).sort(),
+    ["Entradas", "Salidas"],
+  );
 
   const line = await localFallback(
     "u2",
     "Muéstrame la evolución de gastos en una gráfica de línea",
     mcp,
   );
-  assert.equal(line.props.chartType, "line");
+  assert.equal(line.props.chartType, "bar");
+  assert.deepEqual(
+    line.props.data.map((item) => item.label).sort(),
+    ["Entradas", "Salidas"],
+  );
 
   const summary = await localFallback(
     "u2",

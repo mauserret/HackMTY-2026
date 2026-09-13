@@ -160,6 +160,11 @@ const inputSchemas = Object.freeze({
     clabe: clabeSchema.optional(),
     bank: bankSchema.optional(),
   },
+  delete_contact: {
+    userId: userIdSchema,
+    contactId: contactIdSchema.optional(),
+    contact_id: contactIdSchema.optional(),
+  },
   add_account: {
     userId: userIdSchema,
     type: accountTypeSchema,
@@ -175,7 +180,7 @@ const inputSchemas = Object.freeze({
     userId: userIdSchema,
     startDate: dateSchema.optional(),
     endDate: dateSchema.optional(),
-    groupBy: z.enum(["day", "week", "month", "category"]).optional(),
+    groupBy: z.enum(["day", "week", "month", "category", "direction"]).optional(),
   },
   get_transaction_detail: {
     userId: userIdSchema,
@@ -253,9 +258,16 @@ const toolDefinitions = Object.freeze([
   },
   {
     name: "update_contact",
-    description: "Actualiza nombre, CLABE o banco de una cuenta registrada.",
+    description:
+      "Actualiza el nombre registrado, CLABE o banco de una cuenta del usuario. No modifica el nombre legal del titular.",
     inputSchema: inputSchemas.update_contact,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  },
+  {
+    name: "delete_contact",
+    description: "Elimina una cuenta registrada del perfil del usuario.",
+    inputSchema: inputSchemas.delete_contact,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
   },
   {
     name: "add_account",
@@ -318,7 +330,8 @@ function publicAccounts(accounts) {
 }
 
 function serializeId(value) {
-  return typeof value === "string" ? value : value.toString();
+  if (value === null || value === undefined) return "";
+  return typeof value === "string" ? value : String(value);
 }
 
 function serializeDate(value) {
@@ -343,7 +356,7 @@ function contactClabe(contact) {
   return normalizeClabe(contact?.clabe || contact?.account_number || "");
 }
 
-function publicContact(record) {
+function publicContact(record, holderName = "") {
   const contact = canonicalContact(record);
   return {
     id: contact.id,
@@ -354,6 +367,7 @@ function publicContact(record) {
     first_name: contact.firstName,
     fullName: contact.name,
     display_name: contact.name,
+    holder_name: holderName || "",
     clabe: contact.clabe,
     accountNumber: contact.clabe,
     account_number: contact.clabe,
@@ -495,14 +509,33 @@ async function getContacts(input) {
     contacts = await storage.db
       .collection("contacts")
       .find({ owner_id: userId })
-      .sort({ display_name: 1 })
+      .sort({ name: 1, display_name: 1 })
       .toArray();
+  }
+
+  const holderIds = [
+    ...new Set(
+      contacts
+        .map((contact) => contact.contact_user_id)
+        .filter(Boolean)
+        .map((id) => serializeId(id)),
+    ),
+  ];
+  const holderNames = new Map();
+  for (const holderId of holderIds) {
+    const holder = await findUser(storage, holderId);
+    if (holder) holderNames.set(serializeId(holder._id), holder.name);
   }
 
   return {
     user_id: userId,
     contacts: contacts
-      .map(publicContact)
+      .map((contact) => {
+        const holderId = contact.contact_user_id
+          ? serializeId(contact.contact_user_id)
+          : "";
+        return publicContact(contact, holderNames.get(holderId) || "");
+      })
       .sort((left, right) => left.name.localeCompare(right.name, "es")),
   };
 }
@@ -698,14 +731,17 @@ async function updateContact(input) {
       );
     }
     const linkedAccount = await findAccountOwner(storage, clabe);
+    // Solo muta el registro del dueño. Nunca cambia users.name del titular.
     const changes = {
       name,
       name_key: aliasKey(name),
       clabe,
       bank: parsed.bank?.trim() || current.bank || "Banorte",
-      contact_user_id: linkedAccount?.user._id || null,
+      contact_user_id: linkedAccount?.user._id || current.contact_user_id || null,
       account_id:
-        linkedAccount?.account.account_id || `external_${clabe}`,
+        linkedAccount?.account.account_id ||
+        current.account_id ||
+        `external_${clabe}`,
     };
     if (storage.kind === "memory") {
       Object.assign(current, changes);
@@ -716,7 +752,49 @@ async function updateContact(input) {
       );
       Object.assign(current, changes);
     }
-    return { saved: true, contact: publicContact(current) };
+    let holderName = "";
+    if (current.contact_user_id) {
+      const holder = await findUser(storage, current.contact_user_id);
+      holderName = holder?.name || "";
+    }
+    return { saved: true, contact: publicContact(current, holderName) };
+  };
+  return storage.kind === "memory" ? storage.withLock(operation) : operation();
+}
+
+async function deleteContact(input) {
+  const parsed = parseInput("delete_contact", input);
+  const contactId = parsed.contactId || parsed.contact_id;
+  if (!contactId) {
+    throw new ToolError(
+      "VALIDATION_ERROR",
+      "contactId o contact_id es obligatorio",
+    );
+  }
+  const storage = getStorage();
+  const operation = async () => {
+    const current = await findContactById(storage, parsed.userId, contactId);
+    if (!current) {
+      throw new ToolError(
+        "CONTACT_NOT_FOUND",
+        "No se encontró la cuenta registrada",
+      );
+    }
+    if (storage.kind === "memory") {
+      storage.data.contacts = storage.data.contacts.filter(
+        (contact) => serializeId(contact._id) !== serializeId(current._id),
+      );
+    } else {
+      await storage.db.collection("contacts").deleteOne({
+        owner_id: parsed.userId,
+        _id: current._id,
+      });
+    }
+    return {
+      deleted: true,
+      contact_id: serializeId(current._id),
+      name: contactRegisteredName(current),
+    };
   };
   return storage.kind === "memory" ? storage.withLock(operation) : operation();
 }
@@ -786,7 +864,13 @@ async function addAccount(input) {
   return storage.kind === "memory" ? storage.withLock(operation) : operation();
 }
 
+function flowLabel(direction) {
+  return direction === "incoming" ? "Entradas" : "Salidas";
+}
+
 function transactionCategory(concept) {
+  // Conservado solo para metadatos internos; las estadísticas de flujo
+  // usan Entradas/Salidas vía flowLabel.
   const normalized = aliasKey(concept || "");
   if (/\b(cena|comida|restaurante|super|mercado)\b/.test(normalized)) {
     return "Alimentos";
@@ -954,12 +1038,13 @@ async function getFinancialSummary(input) {
     { incoming: 0, outgoing: 0, net: 0, count: 0 },
   );
   const groupBy = parsed.groupBy || "day";
+  const useDirectionGroups =
+    groupBy === "category" || groupBy === "direction";
   const grouped = new Map();
   for (const transaction of details) {
-    const key =
-      groupBy === "category"
-        ? transaction.category
-        : periodKey(transaction.timestamp, groupBy);
+    const key = useDirectionGroups
+      ? flowLabel(transaction.direction)
+      : periodKey(transaction.timestamp, groupBy);
     if (!grouped.has(key)) {
       grouped.set(key, {
         key,
@@ -981,34 +1066,31 @@ async function getFinancialSummary(input) {
     item.count += 1;
   }
   const groups = [...grouped.values()].sort((left, right) =>
-    groupBy === "category"
+    useDirectionGroups
       ? right.total - left.total
       : left.key.localeCompare(right.key),
   );
-  const categoryMap = new Map();
-  for (const transaction of details.filter(
-    (candidate) => candidate.direction === "outgoing",
-  )) {
-    const current = categoryMap.get(transaction.category) || {
-      category: transaction.category,
-      total: 0,
-      count: 0,
-    };
-    current.total = normalizeMoney(current.total + transaction.amount);
-    current.count += 1;
-    categoryMap.set(transaction.category, current);
-  }
+  const categories = [
+    {
+      category: "Entradas",
+      total: totals.incoming,
+      count: details.filter((item) => item.direction === "incoming").length,
+    },
+    {
+      category: "Salidas",
+      total: totals.outgoing,
+      count: details.filter((item) => item.direction === "outgoing").length,
+    },
+  ].filter((item) => item.count > 0);
 
   return {
     user_id: parsed.userId,
     startDate: range.start.toISOString(),
     endDate: range.end.toISOString(),
-    groupBy,
+    groupBy: useDirectionGroups ? "direction" : groupBy,
     totals,
     groups,
-    categories: [...categoryMap.values()].sort(
-      (left, right) => right.total - left.total,
-    ),
+    categories,
     transactions: details.slice(0, 50),
   };
 }
@@ -1623,6 +1705,7 @@ const handlers = Object.freeze({
   register_account: registerAccount,
   add_contact: addContact,
   update_contact: updateContact,
+  delete_contact: deleteContact,
   add_account: addAccount,
   get_financial_summary: getFinancialSummary,
   get_transaction_detail: getTransactionDetail,
@@ -1634,6 +1717,7 @@ module.exports = {
   addAccount,
   addContact,
   createTransaction,
+  deleteContact,
   getBalance,
   getContacts,
   getCreditPlans,

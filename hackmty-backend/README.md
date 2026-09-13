@@ -70,7 +70,7 @@ cliente
 - `llm.js` solo entrega a Gemini tools de lectura; una transferencia se ejecuta
   exclusivamente desde la confirmación del servidor.
 
-El catálogo MCP publica 13 tools. Las seis originales se conservan para
+El catálogo MCP publica 14 tools. Las seis originales se conservan para
 compatibilidad:
 
 - `getBalance({ userId })`
@@ -86,6 +86,7 @@ Las nuevas operaciones son:
 - `register_account({ userId, name, clabe, bank? })`
 - `add_contact({ userId, name, alias?, accountNumber?, clabe?, bank? })`
 - `update_contact({ userId, contactId, ...changes })`
+- `delete_contact({ userId, contactId })`
 - `add_account({ userId, type, name?, clabe?, accountNumber?, bank?, ... })`
 - `get_financial_summary({ userId, startDate?, endDate?, groupBy? })`
 - `get_transaction_detail({ userId, transactionId })`

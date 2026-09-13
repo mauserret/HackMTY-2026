@@ -547,12 +547,21 @@ async function contactsUI(userId, mcp) {
     type: "ui",
     component: "contacts_list",
     props: {
-      title: "Contactos para transferir",
+      title: "Tus cuentas registradas",
+      message:
+        "Puedes editar el nombre con el que las guardaste o eliminarlas. Eso no cambia el nombre del titular original.",
+      editable: true,
       ...result,
-      quick_actions: result.contacts.map((contact) => ({
-        label: `Transferir a ${contact.alias}`,
-        prompt: `Quiero transferir a ${contact.alias}`,
-      })),
+      quick_actions: [
+        {
+          label: "Registrar cuenta",
+          prompt: "Quiero registrar una cuenta nueva",
+        },
+        ...result.contacts.slice(0, 3).map((contact) => ({
+          label: `Transferir a ${contact.name}`,
+          prompt: `Quiero transferir a ${contact.name}`,
+        })),
+      ],
     },
   };
 }
@@ -600,26 +609,37 @@ function requestedChartType(text, hints = {}) {
 
 async function financialChartUI(userId, mcp, text = "", hints = {}) {
   const chartType = requestedChartType(text, hints);
+  const normalized = normalizeText(text);
+  const wantsFlow =
+    /\b(entrada|entradas|salida|salidas|flujo|estadistic|movimientos?)\b/.test(
+      normalized,
+    ) ||
+    /\b(gasto|gastos|ingreso|ingresos)\b/.test(normalized) ||
+    chartType === "pie";
   const summary = await mcp.callTool("get_financial_summary", {
     userId,
-    groupBy: chartType === "pie" ? "category" : "day",
+    groupBy: wantsFlow ? "direction" : "day",
   });
-  const wantsExpenses = /\b(gasto|gastos|salida|salidas)\b/.test(
-    normalizeText(text),
-  );
   let data;
-  if (chartType === "pie") {
-    data = summary.categories.map((category) => ({
-      label: category.category,
-      value: category.total,
-      count: category.count,
-    }));
+  if (wantsFlow || chartType === "pie") {
+    data = [
+      {
+        label: "Entradas",
+        value: summary.totals.incoming,
+        count: summary.categories.find((item) => item.category === "Entradas")
+          ?.count || 0,
+      },
+      {
+        label: "Salidas",
+        value: summary.totals.outgoing,
+        count: summary.categories.find((item) => item.category === "Salidas")
+          ?.count || 0,
+      },
+    ].filter((item) => item.value > 0 || item.count > 0);
   } else {
     data = summary.groups.slice(-12).map((group) => ({
       label: group.label,
-      value: wantsExpenses
-        ? group.outgoing
-        : group.total,
+      value: group.total,
       incoming: group.incoming,
       outgoing: group.outgoing,
       count: group.count,
@@ -627,8 +647,8 @@ async function financialChartUI(userId, mcp, text = "", hints = {}) {
   }
   if (!data.length) {
     data = [
-      { label: "Entradas", value: summary.totals.incoming },
-      { label: "Salidas", value: summary.totals.outgoing },
+      { label: "Entradas", value: 0 },
+      { label: "Salidas", value: 0 },
     ];
   }
   return {
@@ -637,12 +657,12 @@ async function financialChartUI(userId, mcp, text = "", hints = {}) {
     props: {
       title:
         chartType === "pie"
-          ? "Distribución de gastos"
-          : wantsExpenses
-            ? "Evolución de gastos"
+          ? "Entradas y salidas"
+          : wantsFlow
+            ? "Flujo de dinero"
             : "Actividad financiera",
       message: `${summary.totals.count} operaciones analizadas.`,
-      chartType,
+      chartType: wantsFlow && chartType === "line" ? "bar" : chartType,
       data,
       currency: "MXN",
       totals: summary.totals,
@@ -1096,6 +1116,7 @@ function clearMemory(userId) {
 module.exports = {
   MODEL,
   clearMemory,
+  contactsUI,
   extractConcept,
   extractContact,
   extractRecipientName,

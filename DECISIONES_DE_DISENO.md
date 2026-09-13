@@ -124,13 +124,14 @@ estas decisiones.
     usuario y MCP conserva la validación de contacto, fondos e idempotencia.
 25. **El catálogo MCP se amplió sin romper consumidores anteriores.** Se
     conservaron las seis tools camelCase y se agregaron operaciones snake_case
-    para cuentas registradas y analítica, incluida `register_account`. El
-    gateway valida las 13 tools.
+    para cuentas registradas y analítica, incluidas `register_account` y
+    `delete_contact`. El gateway valida las 14 tools.
 26. **Las cuentas destino se registran por nombre + CLABE.** El documento en
-    `contacts` guarda `name`, `name_key` y `clabe`. La transferencia usa ese
-    nombre registrado (no el nombre legal). Si la CLABE no corresponde, MCP
-    responde `CLABE_NOT_FOUND`. `register_account_form` y
-    `register_account_success` son el esqueleto de UI del alta.
+    `contacts` guarda `name`, `name_key` y `clabe`. Editar ese nombre solo
+    muta el registro del dueño; el `users.name` del titular no cambia. La UI
+    de contactos permite editar y eliminar, y la transferencia elige la
+    cuenta desde un desplegable. Las estadísticas de flujo usan **Entradas**
+    y **Salidas**, no categorías de gasto.
 27. **Las gráficas no incorporan otro módulo incompatible con Expo Go.**
     Barras, pastel y línea se renderizan con `react-native-svg`, versión
     alineada por Expo. El backend decide el tipo a partir de la solicitud y

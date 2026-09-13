@@ -301,6 +301,27 @@ export function BankingProvider({ children }) {
     });
   }, []);
 
+  const updateRegisteredAccount = useCallback((account) => {
+    if (!sessionRef.current) return false;
+    return sendSocketMessage({
+      type: "update_registered_account",
+      user_id: sessionRef.current.id,
+      contact_id: account.contact_id || account.contactId,
+      name: account.name || undefined,
+      clabe: account.clabe || undefined,
+      bank: account.bank || undefined,
+    });
+  }, []);
+
+  const deleteRegisteredAccount = useCallback((account) => {
+    if (!sessionRef.current) return false;
+    return sendSocketMessage({
+      type: "delete_registered_account",
+      user_id: sessionRef.current.id,
+      contact_id: account.contact_id || account.contactId,
+    });
+  }, []);
+
   const rateInteraction = useCallback((interactionId, rating) => {
     if (!interactionId || !sessionRef.current) return false;
     return sendSocketMessage({
@@ -325,6 +346,8 @@ export function BankingProvider({ children }) {
       sendMessage,
       confirmTransfer,
       confirmRegisterAccount,
+      updateRegisteredAccount,
+      deleteRegisteredAccount,
       rateInteraction,
       dismissNotification: () => setNotification(null),
     }),
@@ -342,6 +365,8 @@ export function BankingProvider({ children }) {
       sendMessage,
       confirmTransfer,
       confirmRegisterAccount,
+      updateRegisteredAccount,
+      deleteRegisteredAccount,
       rateInteraction,
     ]
   );

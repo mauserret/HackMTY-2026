@@ -15,6 +15,7 @@ const EXPECTED_TOOLS = Object.freeze([
   "register_account",
   "add_contact",
   "update_contact",
+  "delete_contact",
   "add_account",
   "get_financial_summary",
   "get_transaction_detail",

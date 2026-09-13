@@ -29,6 +29,8 @@ export default function DynamicUI({
   message,
   onConfirmTransfer,
   onConfirmRegisterAccount,
+  onUpdateRegisteredAccount,
+  onDeleteRegisteredAccount,
   onSendMessage,
   onRate,
   savedRating,
@@ -68,6 +70,8 @@ export default function DynamicUI({
         <ContactsList
           data={data}
           onSendMessage={onSendMessage}
+          onUpdateRegisteredAccount={onUpdateRegisteredAccount}
+          onDeleteRegisteredAccount={onDeleteRegisteredAccount}
           rating={rating}
         />
       );
@@ -436,16 +440,60 @@ function LineChart({ series, maxValue, currency }) {
   );
 }
 
-function ContactsList({ data, onSendMessage, rating }) {
+function ContactsList({
+  data,
+  onSendMessage,
+  onUpdateRegisteredAccount,
+  onDeleteRegisteredAccount,
+  rating,
+}) {
   const contacts = Array.isArray(data) ? data : data.contacts || [];
+  const [editingId, setEditingId] = useState("");
+  const [draftName, setDraftName] = useState("");
+  const [draftClabe, setDraftClabe] = useState("");
+  const [busyId, setBusyId] = useState("");
+
+  const beginEdit = (contact) => {
+    setEditingId(contact.contact_id || contact.id);
+    setDraftName(contact.name || contact.alias || "");
+    setDraftClabe(contact.clabe || contact.accountNumber || "");
+  };
+
+  const saveEdit = (contact) => {
+    const contactId = contact.contact_id || contact.id;
+    if (!draftName.trim() || draftClabe.trim().length < 10) return;
+    setBusyId(contactId);
+    const sent = onUpdateRegisteredAccount?.({
+      contact_id: contactId,
+      name: draftName.trim(),
+      clabe: draftClabe.trim().replace(/\s+/g, ""),
+      bank: contact.bank,
+    });
+    if (sent !== false) {
+      setEditingId("");
+    }
+    setBusyId("");
+  };
+
+  const removeContact = (contact) => {
+    const contactId = contact.contact_id || contact.id;
+    setBusyId(contactId);
+    onDeleteRegisteredAccount?.({ contact_id: contactId });
+    setBusyId("");
+  };
+
   return (
     <GeneratedCard
       icon="people-outline"
-      title="¿A quién le enviamos?"
+      title={data.title || "Tus cuentas registradas"}
       eyebrow={`${contacts.length} CUENTAS REGISTRADAS`}
     >
+      {data.message ? (
+        <Text style={styles.extractionText}>{data.message}</Text>
+      ) : null}
       <View style={styles.contactList}>
         {contacts.map((contact, index) => {
+          const contactId = contact.contact_id || contact.id;
           const registeredName =
             contact.name || contact.alias || contact.display_name;
           const clabe =
@@ -453,37 +501,142 @@ function ContactsList({ data, onSendMessage, rating }) {
             contact.accountNumber ||
             contact.account_number ||
             "";
+          const editing = editingId === contactId;
           return (
-            <Pressable
-              key={contact.contact_id || contact.id || registeredName}
-              accessibilityRole="button"
-              accessibilityLabel={`Transferir a ${registeredName}`}
-              onPress={() =>
-                onSendMessage(`Quiero transferirle a ${registeredName}`)
-              }
-              style={({ pressed }) => [
-                styles.contactRow,
+            <View
+              key={contactId || registeredName}
+              style={[
+                styles.contactManageRow,
                 index < contacts.length - 1 && styles.rowDivider,
-                pressed && styles.rowPressed,
               ]}
             >
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>
-                  {registeredName?.slice(0, 1).toUpperCase()}
-                </Text>
+              <View style={styles.contactManageHeader}>
+                <View style={styles.avatar}>
+                  <Text style={styles.avatarText}>
+                    {registeredName?.slice(0, 1).toUpperCase()}
+                  </Text>
+                </View>
+                <View style={styles.detailCopy}>
+                  {editing ? (
+                    <>
+                      <Text style={styles.formLabel}>Nombre registrado</Text>
+                      <TextInput
+                        value={draftName}
+                        onChangeText={setDraftName}
+                        style={styles.inlineInput}
+                        placeholder="Nombre con el que la guardaste"
+                        placeholderTextColor={colors.muted}
+                      />
+                      <Text style={[styles.formLabel, { marginTop: 8 }]}>
+                        CLABE
+                      </Text>
+                      <TextInput
+                        value={draftClabe}
+                        onChangeText={setDraftClabe}
+                        style={styles.inlineInput}
+                        keyboardType="number-pad"
+                        maxLength={18}
+                        placeholder="CLABE"
+                        placeholderTextColor={colors.muted}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.contactName}>{registeredName}</Text>
+                      <Text style={styles.detailHint}>
+                        CLABE •••• {String(clabe).slice(-4)}
+                      </Text>
+                      {contact.holder_name ? (
+                        <Text style={styles.holderHint}>
+                          Titular original: {contact.holder_name}
+                        </Text>
+                      ) : null}
+                    </>
+                  )}
+                </View>
               </View>
-              <View style={styles.detailCopy}>
-                <Text style={styles.contactName}>{registeredName}</Text>
-                <Text style={styles.detailHint}>
-                  CLABE •••• {String(clabe).slice(-4)}
-                </Text>
+              <View style={styles.contactActions}>
+                {editing ? (
+                  <>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => saveEdit(contact)}
+                      style={({ pressed }) => [
+                        styles.actionChip,
+                        styles.actionChipPrimary,
+                        pressed && styles.rowPressed,
+                      ]}
+                    >
+                      <Text style={styles.actionChipPrimaryText}>Guardar</Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => setEditingId("")}
+                      style={({ pressed }) => [
+                        styles.actionChip,
+                        pressed && styles.rowPressed,
+                      ]}
+                    >
+                      <Text style={styles.actionChipText}>Cancelar</Text>
+                    </Pressable>
+                  </>
+                ) : (
+                  <>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Transferir a ${registeredName}`}
+                      onPress={() =>
+                        onSendMessage(`Quiero transferirle a ${registeredName}`)
+                      }
+                      style={({ pressed }) => [
+                        styles.actionChip,
+                        pressed && styles.rowPressed,
+                      ]}
+                    >
+                      <Ionicons
+                        name="paper-plane-outline"
+                        size={14}
+                        color={colors.charcoal}
+                      />
+                      <Text style={styles.actionChipText}>Transferir</Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={busyId === contactId}
+                      onPress={() => beginEdit(contact)}
+                      style={({ pressed }) => [
+                        styles.actionChip,
+                        pressed && styles.rowPressed,
+                      ]}
+                    >
+                      <Ionicons
+                        name="create-outline"
+                        size={14}
+                        color={colors.charcoal}
+                      />
+                      <Text style={styles.actionChipText}>Editar</Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={busyId === contactId}
+                      onPress={() => removeContact(contact)}
+                      style={({ pressed }) => [
+                        styles.actionChip,
+                        styles.actionChipDanger,
+                        pressed && styles.rowPressed,
+                      ]}
+                    >
+                      <Ionicons
+                        name="trash-outline"
+                        size={14}
+                        color={colors.red}
+                      />
+                      <Text style={styles.actionChipDangerText}>Eliminar</Text>
+                    </Pressable>
+                  </>
+                )}
               </View>
-              <Ionicons
-                name="chevron-forward"
-                size={18}
-                color={colors.disabled}
-              />
-            </Pressable>
+            </View>
           );
         })}
       </View>
@@ -552,16 +705,22 @@ function matchContact(recipient, contacts) {
 function TransferForm({ data, onConfirm, rating }) {
   const initial = data.initialValues || {};
   const contacts = data.available_contacts || [];
+  const initialMatch =
+    matchContact(
+      initial.recipient || data.registered_name || data.to_alias || "",
+      contacts,
+    ) ||
+    (data.contact_id
+      ? contacts.find(
+          (contact) =>
+            (contact.contact_id || contact.id) === data.contact_id,
+        )
+      : null);
   const [status, setStatus] = useState("ready");
-  const [recipient, setRecipient] = useState(
-    String(
-      initial.recipient ??
-        data.registered_name ??
-        data.recipient_name ??
-        data.to_alias ??
-        "",
-    ),
+  const [selectedId, setSelectedId] = useState(
+    initialMatch?.contact_id || initialMatch?.id || "",
   );
+  const [dropdownOpen, setDropdownOpen] = useState(false);
   const [amountText, setAmountText] = useState(
     String(initial.amount ?? data.amount ?? ""),
   );
@@ -570,72 +729,48 @@ function TransferForm({ data, onConfirm, rating }) {
   );
   const [validationError, setValidationError] = useState("");
   const amount = parseEditableAmount(amountText);
-  const selectedContact = matchContact(recipient, contacts);
-  const keepsInitialContact =
-    normalizeComparable(recipient) ===
-    normalizeComparable(
-      initial.recipient || data.registered_name || data.recipient_name,
-    );
+  const selectedContact =
+    contacts.find(
+      (contact) => (contact.contact_id || contact.id) === selectedId,
+    ) || null;
+  const registeredName =
+    selectedContact?.name || selectedContact?.alias || "";
   const clabe =
     selectedContact?.clabe ||
     selectedContact?.accountNumber ||
     selectedContact?.account_number ||
-    (keepsInitialContact
-      ? initial.clabe ||
-        initial.accountNumber ||
-        data.clabe ||
-        data.account_number
-      : "") ||
     "";
-  const bank =
-    selectedContact?.bank ||
-    (keepsInitialContact ? initial.bank || data.bank : "") ||
-    "";
+  const bank = selectedContact?.bank || "";
   const canSubmit =
     status === "ready" &&
-    Boolean(recipient.trim()) &&
+    Boolean(selectedContact) &&
     Boolean(amount) &&
     Boolean(String(clabe).trim());
 
   const handleConfirm = () => {
     if (status !== "ready") return;
-    if (!recipient.trim() || !amount) {
-      setValidationError(
-        "Completa el nombre registrado y escribe un monto válido.",
-      );
+    if (!selectedContact || !amount) {
+      setValidationError("Elige una cuenta registrada y un monto válido.");
       return;
     }
-    const contact = matchContact(recipient, contacts);
-    const resolvedClabe =
-      contact?.clabe ||
-      contact?.accountNumber ||
-      contact?.account_number ||
-      clabe;
-    if (!String(resolvedClabe || "").trim()) {
-      setValidationError(
-        "No hay una CLABE asociada a ese nombre. Registra la cuenta primero.",
-      );
-      return;
-    }
-    const registeredName = contact?.name || contact?.alias || recipient.trim();
     const sent = onConfirm({
       ...data,
-      contact_id: contact?.contact_id || contact?.id || "",
+      contact_id: selectedContact.contact_id || selectedContact.id || "",
       to_alias: registeredName,
       registered_name: registeredName,
       recipient_name: registeredName,
-      account_number: resolvedClabe,
-      clabe: resolvedClabe,
-      bank: contact?.bank || bank || undefined,
+      account_number: clabe,
+      clabe,
+      bank: bank || undefined,
       amount,
       concept: concept.trim(),
       initialValues: {
         recipient: registeredName,
         amount: String(amount),
         concept: concept.trim(),
-        accountNumber: resolvedClabe,
-        clabe: resolvedClabe,
-        bank: contact?.bank || bank || "",
+        accountNumber: clabe,
+        clabe,
+        bank: bank || "",
       },
     });
     if (sent !== false) {
@@ -653,63 +788,86 @@ function TransferForm({ data, onConfirm, rating }) {
       <View style={styles.extractionNote}>
         <Ionicons name="sparkles-outline" size={17} color={colors.red} />
         <Text style={styles.extractionText}>
-          Usa el nombre con el que registraste la cuenta y su CLABE.
+          Elige una de tus cuentas registradas. El nombre mostrado es el que tú
+          guardaste, no el del titular.
         </Text>
       </View>
 
       <View style={styles.formField}>
         <View style={styles.formLabelRow}>
-          <Text style={styles.formLabel}>Nombre registrado</Text>
-          {initial.recipient ? (
-            <Text style={styles.detectedLabel}>DETECTADO</Text>
-          ) : null}
+          <Text style={styles.formLabel}>Cuenta registrada</Text>
         </View>
-        <View style={styles.formInputShell}>
-          <Ionicons name="person-outline" size={18} color={colors.slate} />
-          <TextInput
-            value={recipient}
-            onChangeText={(value) => {
-              setRecipient(value);
-              setValidationError("");
-            }}
-            editable={status === "ready"}
-            placeholder="Ej. Timo"
-            placeholderTextColor={colors.muted}
-            autoCapitalize="words"
-            maxLength={64}
-            style={styles.formInput}
-            accessibilityLabel="Nombre registrado de la cuenta"
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Elegir cuenta registrada"
+          disabled={status !== "ready" || contacts.length === 0}
+          onPress={() => setDropdownOpen((open) => !open)}
+          style={({ pressed }) => [
+            styles.dropdownTrigger,
+            pressed && styles.rowPressed,
+          ]}
+        >
+          <View style={styles.detailCopy}>
+            <Text
+              style={[
+                styles.dropdownValue,
+                !registeredName && styles.dropdownPlaceholder,
+              ]}
+            >
+              {registeredName ||
+                (contacts.length
+                  ? "Selecciona una cuenta"
+                  : "No hay cuentas registradas")}
+            </Text>
+            {clabe ? (
+              <Text style={styles.detailHint}>
+                CLABE •••• {String(clabe).slice(-4)}
+              </Text>
+            ) : null}
+          </View>
+          <Ionicons
+            name={dropdownOpen ? "chevron-up" : "chevron-down"}
+            size={18}
+            color={colors.slate}
           />
-        </View>
-        {contacts.length ? (
-          <View style={styles.contactSuggestions}>
+        </Pressable>
+        {dropdownOpen ? (
+          <View style={styles.dropdownMenu}>
             {contacts.map((contact) => {
-              const label = contact.name || contact.alias || contact.display_name;
+              const id = contact.contact_id || contact.id;
+              const label = contact.name || contact.alias;
+              const selected = id === selectedId;
               return (
                 <Pressable
-                  key={contact.contact_id || contact.alias || label}
+                  key={id}
                   accessibilityRole="button"
-                  accessibilityLabel={`Seleccionar ${label}`}
-                  disabled={status !== "ready"}
                   onPress={() => {
-                    setRecipient(label);
+                    setSelectedId(id);
+                    setDropdownOpen(false);
                     setValidationError("");
                   }}
                   style={({ pressed }) => [
-                    styles.contactSuggestion,
-                    matchContact(recipient, [contact]) &&
-                      styles.contactSuggestionSelected,
+                    styles.dropdownOption,
+                    selected && styles.dropdownOptionSelected,
                     pressed && styles.rowPressed,
                   ]}
                 >
                   <Text
                     style={[
-                      styles.contactSuggestionText,
-                      matchContact(recipient, [contact]) &&
-                        styles.contactSuggestionTextSelected,
+                      styles.dropdownOptionText,
+                      selected && styles.dropdownOptionTextSelected,
                     ]}
                   >
                     {label}
+                  </Text>
+                  <Text style={styles.detailHint}>
+                    ••••{" "}
+                    {String(
+                      contact.clabe ||
+                        contact.accountNumber ||
+                        contact.account_number ||
+                        "",
+                    ).slice(-4)}
                   </Text>
                 </Pressable>
               );
@@ -725,7 +883,7 @@ function TransferForm({ data, onConfirm, rating }) {
         <View style={styles.detailCopy}>
           <Text style={styles.canonicalAccountLabel}>CLABE</Text>
           <Text style={styles.canonicalAccountValue}>
-            {clabe || "Selecciona un nombre registrado"}
+            {clabe || "Se completa al elegir la cuenta"}
           </Text>
         </View>
         {bank ? <Text style={styles.bankLabel}>{bank}</Text> : null}
@@ -1821,6 +1979,124 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     alignItems: "center",
     justifyContent: "center",
+  },
+  contactManageRow: {
+    paddingVertical: 12,
+  },
+  contactManageHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  contactActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 10,
+    marginLeft: 46,
+  },
+  actionChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  actionChipPrimary: {
+    backgroundColor: colors.red,
+    borderColor: colors.red,
+  },
+  actionChipDanger: {
+    borderColor: "#F3C4CB",
+    backgroundColor: colors.errorSoft,
+  },
+  actionChipText: {
+    color: colors.charcoal,
+    fontFamily,
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  actionChipPrimaryText: {
+    color: colors.surface,
+    fontFamily,
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  actionChipDangerText: {
+    color: colors.red,
+    fontFamily,
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  holderHint: {
+    color: colors.muted,
+    fontFamily,
+    fontSize: 10,
+    marginTop: 2,
+  },
+  inlineInput: {
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    color: colors.charcoal,
+    fontFamily,
+    fontSize: 13,
+    backgroundColor: colors.canvas,
+  },
+  dropdownTrigger: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    backgroundColor: colors.canvas,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  dropdownValue: {
+    color: colors.charcoal,
+    fontFamily,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  dropdownPlaceholder: {
+    color: colors.muted,
+    fontWeight: "500",
+  },
+  dropdownMenu: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    backgroundColor: colors.surface,
+    overflow: "hidden",
+  },
+  dropdownOption: {
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  dropdownOptionSelected: {
+    backgroundColor: colors.errorSoft,
+  },
+  dropdownOptionText: {
+    color: colors.charcoal,
+    fontFamily,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  dropdownOptionTextSelected: {
+    color: colors.red,
   },
   contactSuggestionSelected: {
     borderColor: colors.red,

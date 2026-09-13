@@ -35,6 +35,8 @@ export default function ChatScreen() {
     assistantStatus,
     confirmTransfer,
     confirmRegisterAccount,
+    updateRegisteredAccount,
+    deleteRegisteredAccount,
     connection,
     dismissNotification,
     messages,
@@ -73,6 +75,8 @@ export default function ChatScreen() {
               message={item.data}
               onConfirmTransfer={confirmTransfer}
               onConfirmRegisterAccount={confirmRegisterAccount}
+              onUpdateRegisteredAccount={updateRegisteredAccount}
+              onDeleteRegisteredAccount={deleteRegisteredAccount}
               onSendMessage={sendMessage}
               onRate={rateInteraction}
               savedRating={item.rating}
@@ -81,7 +85,14 @@ export default function ChatScreen() {
         </View>
       );
     },
-    [confirmRegisterAccount, confirmTransfer, rateInteraction, sendMessage],
+    [
+      confirmRegisterAccount,
+      confirmTransfer,
+      deleteRegisteredAccount,
+      rateInteraction,
+      sendMessage,
+      updateRegisteredAccount,
+    ],
   );
 
   return (
@@ -132,6 +143,8 @@ export default function ChatScreen() {
                 message={WELCOME_UI}
                 onConfirmTransfer={confirmTransfer}
                 onConfirmRegisterAccount={confirmRegisterAccount}
+                onUpdateRegisteredAccount={updateRegisteredAccount}
+                onDeleteRegisteredAccount={deleteRegisteredAccount}
                 onSendMessage={sendMessage}
                 onRate={rateInteraction}
               />

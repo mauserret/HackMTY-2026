@@ -92,7 +92,7 @@ test("WebSocket completa transferencia confirmada, rating y notificación", asyn
   );
   const health = await healthResponse.json();
   assert.equal(healthResponse.status, 200);
-  assert.equal(health.tool_count, 13);
+  assert.equal(health.tool_count, 14);
   assert.equal(health.storage, "memory");
   assert.equal(health.storage_reason, "MONGODB_URI_MISSING");
   assert.equal(
