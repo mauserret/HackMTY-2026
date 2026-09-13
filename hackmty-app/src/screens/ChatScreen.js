@@ -1,4 +1,4 @@
-import React, { useCallback, useRef } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -6,17 +6,18 @@ import {
   StyleSheet,
   Text,
   View,
+  Image,
 } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, Feather } from "@expo/vector-icons";
 
-import AppHeader from "../components/AppHeader";
 import Composer from "../components/Composer";
 import DynamicUI from "../components/DynamicUI";
 import NotificationBanner from "../components/NotificationBanner";
+import LiveVoiceModal from "../components/LiveVoiceModal";
 import { useBanking } from "../context/BankingContext";
 import { colors, fontFamily, radii, spacing } from "../theme";
 
@@ -26,7 +27,7 @@ const WELCOME_UI = {
   props: {
     title: "¿Qué quieres resolver hoy?",
     message:
-      "Descríbelo con tus propias palabras y construiré una experiencia para completarlo.",
+      "Descríbelo con tus propias palabras y Ban-IA construirá una experiencia inteligente para ti.",
   },
 };
 
@@ -46,6 +47,9 @@ export default function ChatScreen() {
   } = useBanking();
   const insets = useSafeAreaInsets();
   const listRef = useRef(null);
+
+  // Estado para controlar el modal de voz tipo "Modo Live"
+  const [isLiveModalVisible, setIsLiveModalVisible] = useState(false);
 
   const renderItem = useCallback(
     ({ item }) => {
@@ -97,7 +101,28 @@ export default function ChatScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
-      <AppHeader />
+      
+      {/* HEADER SUPERIOR INSTITUCIONAL CON LOGOTIPO */}
+      <View style={styles.appHeader}>
+        <Image 
+          source={require("../assets/logo.png")} 
+          style={styles.headerLogoImage} 
+          resizeMode="contain" 
+        />
+        <View style={styles.headerRightActions}>
+          <View style={styles.onlinePill}>
+            <View style={styles.onlineDot} />
+            <Text style={styles.onlineText}>En línea</Text>
+          </View>
+          <View style={styles.badgeIconButton}>
+            <Text style={styles.badgeIconLetter}>B</Text>
+          </View>
+          <View style={styles.logoutButton}>
+            <Feather name="message-square" size={18} color="#EB0029" />
+          </View>
+        </View>
+      </View>
+
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -105,12 +130,12 @@ export default function ChatScreen() {
       >
         <View style={styles.canvasHeading}>
           <View>
-            <Text style={styles.canvasEyebrow}>ASISTENTE GENERATIVO</Text>
-            <Text style={styles.canvasTitle}>Tu espacio inteligente</Text>
+            <Text style={styles.canvasEyebrow}>ASISTENTE INTELIGENTE</Text>
+            <Text style={styles.canvasTitle}>Ban-IA Workspace</Text>
           </View>
           <View style={styles.liveBadge}>
             <View style={styles.liveDot} />
-            <Text style={styles.liveText}>EN VIVO</Text>
+            <Text style={styles.liveText}>EN LÍNEA</Text>
           </View>
         </View>
 
@@ -122,7 +147,7 @@ export default function ChatScreen() {
               color={colors.warning}
             />
             <Text style={styles.offlineText}>
-              Reconectando con tu sesión segura…
+              Reconectando con tu sesión segura de Banorte…
             </Text>
           </View>
         ) : null}
@@ -159,13 +184,22 @@ export default function ChatScreen() {
           }
         />
 
+        {/* COMPOSER CON ACCESO AL MODO LIVE */}
         <Composer
           onSend={sendMessage}
           disabled={connection !== "connected"}
           assistantStatus={assistantStatus}
           bottomInset={Math.min(insets.bottom, 16)}
+          onPressVoice={() => setIsLiveModalVisible(true)}
         />
       </KeyboardAvoidingView>
+
+      {/* MODAL MODO LIVE */}
+      <LiveVoiceModal
+        visible={isLiveModalVisible}
+        onClose={() => setIsLiveModalVisible(false)}
+        assistantStatus={assistantStatus}
+      />
 
       <NotificationBanner
         notification={notification}
@@ -179,7 +213,68 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   safeArea: {
     flex: 1,
-    backgroundColor: colors.red,
+    backgroundColor: '#EB0029',
+  },
+  appHeader: {
+    height: 56,
+    backgroundColor: '#EB0029',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: '#D30024'
+  },
+  headerLogoImage: {
+    width: 130,
+    height: 32,
+    tintColor: '#FFFFFF',
+  },
+  headerRightActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  onlinePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 5,
+  },
+  onlineDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#2ECC71',
+  },
+  onlineText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  badgeIconButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeIconLetter: {
+    color: '#EB0029',
+    fontWeight: 'bold',
+    fontSize: 13,
+  },
+  logoutButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   canvasHeading: {
     backgroundColor: colors.surface,
@@ -193,16 +288,16 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   canvasEyebrow: {
-    color: colors.red,
-    fontFamily,
-    fontSize: 8,
+    color: '#EB0029',
+    fontFamily: 'Gotham-Bold',
+    fontSize: 9,
     fontWeight: "800",
     letterSpacing: 1.3,
   },
   canvasTitle: {
-    color: colors.charcoal,
-    fontFamily,
-    fontSize: 15,
+    color: '#323648',
+    fontFamily: 'Gotham-Bold',
+    fontSize: 16,
     fontWeight: "700",
     marginTop: 1,
   },
@@ -219,12 +314,12 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: colors.success,
+    backgroundColor: '#2ECC71',
   },
   liveText: {
-    color: colors.success,
-    fontFamily,
-    fontSize: 8,
+    color: '#2ECC71',
+    fontFamily: 'Gotham-Bold',
+    fontSize: 9,
     fontWeight: "800",
     letterSpacing: 0.6,
   },
@@ -237,14 +332,14 @@ const styles = StyleSheet.create({
   },
   offlineText: {
     color: colors.warning,
-    fontFamily,
-    fontSize: 9,
+    fontFamily: 'Gotham-Bold',
+    fontSize: 10,
     fontWeight: "600",
     marginLeft: 6,
   },
   feed: {
     flex: 1,
-    backgroundColor: colors.canvas,
+    backgroundColor: '#F4F5F7',
   },
   welcomeCanvas: {
     width: "100%",
@@ -266,15 +361,15 @@ const styles = StyleSheet.create({
   },
   userBubble: {
     maxWidth: "84%",
-    backgroundColor: colors.red,
+    backgroundColor: '#5B6670', // Gris Banorte aplicado en las burbujas
     borderRadius: 16,
     borderBottomRightRadius: 4,
     paddingHorizontal: 13,
     paddingVertical: 10,
   },
   userText: {
-    color: colors.surface,
-    fontFamily,
+    color: '#FFFFFF',
+    fontFamily: 'Gotham-Bold',
     fontSize: 13,
     lineHeight: 18,
   },
@@ -286,8 +381,8 @@ const styles = StyleSheet.create({
   },
   voiceLabelText: {
     color: "#FFD5DC",
-    fontFamily,
-    fontSize: 7,
+    fontFamily: 'Gotham-Bold',
+    fontSize: 8,
     fontWeight: "800",
     letterSpacing: 0.8,
   },
@@ -297,10 +392,10 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
   },
   agentMarker: {
-    width: 25,
-    height: 25,
+    width: 26,
+    height: 26,
     borderRadius: 8,
-    backgroundColor: colors.charcoal,
+    backgroundColor: '#EB0029',
     alignItems: "center",
     justifyContent: "center",
     marginRight: 7,

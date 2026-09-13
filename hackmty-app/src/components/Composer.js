@@ -42,6 +42,7 @@ export default function Composer({
   disabled = false,
   assistantStatus,
   bottomInset = 0,
+  onPressVoice, // <--- Prop añadida para recibir la función del Modo Live
 }) {
   const [text, setText] = useState("");
   const [recognizing, setRecognizing] = useState(false);
@@ -204,6 +205,14 @@ export default function Composer({
   };
 
   const toggleRecognition = () => {
+    // Si nos pasan una función externa para el Modo Live, la ejecutamos prioritariamente
+    if (onPressVoice) {
+      Keyboard.dismiss();
+      onPressVoice();
+      return;
+    }
+
+    // Comportamiento anterior por defecto si no hay modal live
     if (recognizing) {
       SpeechRecognitionModule?.stop();
     } else {
@@ -240,8 +249,8 @@ export default function Composer({
             recognizing
               ? "Escuchando…"
               : SpeechRecognitionModule
-                ? "Escribe o dicta tu solicitud…"
-                : "Escribe tu solicitud…"
+              ? "Escribe o dicta tu solicitud…"
+              : "Escribe tu solicitud…"
           }
           placeholderTextColor={
             recognizing ? colors.red : colors.muted
@@ -260,7 +269,7 @@ export default function Composer({
           accessibilityLabel={
             recognizing
               ? "Detener reconocimiento de voz"
-              : "Dictar solicitud con reconocimiento de Google"
+              : "Abrir asistente de voz Ban-IA Live"
           }
           disabled={disabled}
           onPress={toggleRecognition}
@@ -307,8 +316,8 @@ export default function Composer({
           {recognizing
             ? "Dictando con el servicio nativo del dispositivo"
             : SpeechRecognitionModule
-              ? "Tu voz se convierte en texto antes de enviarse"
-              : "Dictado disponible en una development build"}
+            ? "Toca el micrófono para abrir Ban-IA Live"
+            : "Dictado disponible en una development build"}
         </Text>
       </View>
 

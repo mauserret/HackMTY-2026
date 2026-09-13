@@ -18,11 +18,9 @@ export default function App() {
     <SafeAreaProvider>
       <View style={styles.app}>
         <StatusBar style="light" backgroundColor={colors.red} />
-        <View style={styles.shell}>
-          <BankingProvider>
-            <RootScreen />
-          </BankingProvider>
-        </View>
+        <BankingProvider>
+          <RootScreen />
+        </BankingProvider>
       </View>
     </SafeAreaProvider>
   );
@@ -31,13 +29,6 @@ export default function App() {
 const styles = StyleSheet.create({
   app: {
     flex: 1,
-    alignItems: "center",
-    backgroundColor: colors.canvasStrong,
-  },
-  shell: {
-    flex: 1,
-    width: "100%",
-    maxWidth: 620,
-    backgroundColor: colors.red,
+    backgroundColor: colors.canvas,
   },
 });

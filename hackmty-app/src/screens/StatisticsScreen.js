@@ -1,9 +1,8 @@
 import React, { useMemo } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View, Image, Pressable } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, Feather } from "@expo/vector-icons";
 
-import AppHeader from "../components/AppHeader";
 import { useBanking } from "../context/BankingContext";
 import {
   colors,
@@ -15,7 +14,7 @@ import {
 } from "../theme";
 
 export default function StatisticsScreen() {
-  const { messages, overview } = useBanking();
+  const { messages, overview, logout } = useBanking();
   const metrics = useMemo(() => {
     const movements = overview?.movements || [];
     const accounts = overview?.accounts || [];
@@ -53,7 +52,28 @@ export default function StatisticsScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
-      <AppHeader />
+      
+      {/* HEADER SUPERIOR INSTITUCIONAL CON LOGOTIPO */}
+      <View style={styles.appHeader}>
+        <Image 
+          source={require("../assets/logo.png")} 
+          style={styles.headerLogoImage} 
+          resizeMode="contain" 
+        />
+        <View style={styles.headerRightActions}>
+          <View style={styles.onlinePill}>
+            <View style={styles.onlineDot} />
+            <Text style={styles.onlineText}>En línea</Text>
+          </View>
+          <View style={styles.badgeIconButton}>
+            <Text style={styles.badgeIconLetter}>B</Text>
+          </View>
+          <Pressable onPress={logout} style={styles.logoutButton} accessibilityRole="button">
+            <Feather name="log-out" size={18} color="#EB0029" />
+          </Pressable>
+        </View>
+      </View>
+
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.content}
@@ -179,7 +199,68 @@ function FlowBar({ label, value, max, color }) {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: colors.red,
+    backgroundColor: '#EB0029',
+  },
+  appHeader: {
+    height: 56,
+    backgroundColor: '#EB0029',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: '#D30024'
+  },
+  headerLogoImage: {
+    width: 130,
+    height: 32,
+    tintColor: '#FFFFFF',
+  },
+  headerRightActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  onlinePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 5,
+  },
+  onlineDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#2ECC71',
+  },
+  onlineText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  badgeIconButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeIconLetter: {
+    color: '#EB0029',
+    fontWeight: 'bold',
+    fontSize: 13,
+  },
+  logoutButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   scroll: {
     flex: 1,
@@ -191,7 +272,7 @@ const styles = StyleSheet.create({
   },
   eyebrow: {
     color: colors.red,
-    fontFamily,
+    fontFamily: 'Gotham-Bold',
     fontSize: 9,
     fontWeight: "800",
     letterSpacing: 1.2,
@@ -199,7 +280,7 @@ const styles = StyleSheet.create({
   },
   title: {
     color: colors.charcoal,
-    fontFamily,
+    fontFamily: 'Gotham-Bold',
     fontSize: 27,
     fontWeight: "700",
     marginTop: 2,
@@ -227,8 +308,8 @@ const styles = StyleSheet.create({
     padding: spacing.md,
   },
   metricCardDark: {
-    backgroundColor: colors.charcoal,
-    borderColor: colors.charcoal,
+    backgroundColor: '#5B6670',
+    borderColor: '#5B6670',
   },
   metricIcon: {
     width: 34,
@@ -240,7 +321,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   metricIconDark: {
-    backgroundColor: colors.surface,
+    backgroundColor: 'rgba(255,255,255,0.15)',
   },
   metricLabel: {
     color: colors.muted,
@@ -250,7 +331,7 @@ const styles = StyleSheet.create({
   },
   metricValue: {
     color: colors.charcoal,
-    fontFamily,
+    fontFamily: 'Gotham-Bold',
     fontSize: 18,
     fontWeight: "800",
     marginTop: 3,
@@ -277,14 +358,14 @@ const styles = StyleSheet.create({
   },
   chartEyebrow: {
     color: colors.red,
-    fontFamily,
+    fontFamily: 'Gotham-Bold',
     fontSize: 8,
     fontWeight: "800",
     letterSpacing: 1,
   },
   chartTitle: {
     color: colors.charcoal,
-    fontFamily,
+    fontFamily: 'Gotham-Bold',
     fontSize: 16,
     fontWeight: "700",
     marginTop: 2,
@@ -317,7 +398,7 @@ const styles = StyleSheet.create({
   },
   flowValue: {
     color: colors.charcoal,
-    fontFamily,
+    fontFamily: 'Gotham-Bold',
     fontSize: 11,
     fontWeight: "800",
   },

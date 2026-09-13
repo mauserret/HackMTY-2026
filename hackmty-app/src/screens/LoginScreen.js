@@ -1,379 +1,281 @@
-import React, { useState } from "react";
-import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  StyleSheet, Text, View, TextInput, TouchableOpacity, 
+  StatusBar, Image, Animated, 
+  KeyboardAvoidingView, Platform, Easing, ActivityIndicator,
+  ScrollView
+} from 'react-native';
+import { useFonts } from 'expo-font';
+import { Feather } from '@expo/vector-icons';
+import { useBanking } from '../context/BankingContext';
 
-import BrandMark from "../components/BrandMark";
-import ConnectionPill from "../components/ConnectionPill";
-import { useBanking } from "../context/BankingContext";
-import {
-  colors,
-  fontFamily,
-  radii,
-  shadow,
-  spacing,
-} from "../theme";
+export default function LoginScreen({ navigation }) {
+  const { authError, authLoading, login } = useBanking();
 
-export default function LoginScreen() {
-  const { authError, authLoading, connection, login } = useBanking();
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
+  // Carga de tipografías Gotham
+  const [fontsLoaded] = useFonts({
+    'Gotham-Bold': require('../assets/fonts/Gotham Bold.otf'),
+    'Gotham-Black': require('../assets/fonts/Gotham Black.otf'),
+  });
 
-  const submit = () => login(username, password);
+  const [usuario, setUsuario] = useState('');
+  const [password, setPassword] = useState('');
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+  const [isSplashLoading, setIsSplashLoading] = useState(true);
+  
+  const [isUserFocused, setIsUserFocused] = useState(false);
+  const [isPasswordFocused, setIsPasswordFocused] = useState(false);
+
+  // Animaciones
+  const fadeAnim = useRef(new Animated.Value(1)).current; 
+  const contentAnim = useRef(new Animated.Value(0)).current; 
+  const slideUpAnim = useRef(new Animated.Value(20)).current;
+  const loginAnim = useRef(new Animated.Value(0)).current;
+
+  // 1. SPLASH SCREEN INICIAL ULTRA RÁPIDO (0.6 segundos)
+  useEffect(() => {
+    if (fontsLoaded) {
+      setTimeout(() => {
+        Animated.sequence([
+          Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
+          Animated.parallel([
+            Animated.timing(contentAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.exp), useNativeDriver: true }),
+            Animated.timing(slideUpAnim, { toValue: 0, duration: 400, easing: Easing.out(Easing.exp), useNativeDriver: true })
+          ])
+        ]).start(() => setIsSplashLoading(false));
+      }, 600); 
+    }
+  }, [fontsLoaded]);
+
+  // 2. PANTALLA POST-LOGIN
+  useEffect(() => {
+    if (authLoading) {
+      Animated.timing(loginAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
+    } else {
+      Animated.timing(loginAnim, { toValue: 0, duration: 400, useNativeDriver: true }).start();
+    }
+  }, [authLoading]);
+
+  const submit = () => {
+    if (usuario && password) {
+      login(usuario, password);
+    }
+  };
+
+  if (!fontsLoaded) {
+    return (
+      <View style={styles.loadingScreen}>
+        <ActivityIndicator size="large" color="#EB0029" />
+      </View>
+    );
+  }
+
+  const loginOverlayOpacity = loginAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 1]
+  });
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.hero}>
-            <View style={styles.brandRow}>
-              <BrandMark inverse />
-              <ConnectionPill state={connection} inverse />
-            </View>
-            <Text style={styles.heroEyebrow}>BANCA GENERATIVA</Text>
-            <Text style={styles.heroTitle}>
-              Tu banco construye la respuesta contigo.
-            </Text>
-            <Text style={styles.heroBody}>
-              Inicia sesión para consultar, analizar y operar tus finanzas.
-            </Text>
-            <View style={styles.heroDecorationOne} />
-            <View style={styles.heroDecorationTwo} />
-          </View>
+    <View style={styles.mainContainer}>
+      <StatusBar backgroundColor="#EB0029" barStyle="light-content" translucent={true} />
 
-          <View style={[styles.loginCard, shadow]}>
-            <View style={styles.cardHeading}>
-              <View>
-                <Text style={styles.cardTitle}>Inicia sesión</Text>
-                <Text style={styles.cardSubtitle}>
-                  Ingresa tus credenciales de acceso
-                </Text>
+      {/* SPLASH SCREEN INICIAL (CENTRADO CORRECTAMENTE) */}
+      {isSplashLoading && (
+        <Animated.View style={[styles.splashScreen, { opacity: fadeAnim }]}>
+          <Image source={require('../assets/logo.png')} style={styles.splashLogoLarge} resizeMode="contain" />
+          <ActivityIndicator size="small" color="#FFFFFF" style={{ marginTop: 24 }} />
+        </Animated.View>
+      )}
+
+      {/* PANTALLA DE CARGA POST-LOGIN (CENTRADA CORRECTAMENTE) */}
+      <Animated.View style={[styles.splashScreen, { opacity: loginOverlayOpacity, zIndex: authLoading ? 999 : -1 }]}>
+        <Image source={require('../assets/logo.png')} style={styles.splashLogoLarge} resizeMode="contain" />
+        <ActivityIndicator size="large" color="#FFFFFF" style={{ marginTop: 24 }} />
+        <Text style={styles.verifyingText}>Conectando con BAN-IA...</Text>
+        <Text style={styles.subVerifyingText}>Autenticando credenciales de forma segura</Text>
+      </Animated.View>
+
+      {/* CONTENIDO PRINCIPAL DESDE ARRIBA */}
+      <KeyboardAvoidingView style={styles.flexContainer} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <Animated.View style={[
+          styles.flexContainer, 
+          { opacity: contentAnim, transform: [{ translateY: slideUpAnim }] }
+        ]}>
+          <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+            
+            {/* HEADER ROJO INSTITUCIONAL ARRIBA */}
+            <View style={styles.header}>
+              <View style={styles.logoRow}>
+                <Image source={require('../assets/logo.png')} style={styles.headerLogo} resizeMode="contain" />
               </View>
-              <View style={styles.lockIcon}>
-                <Ionicons
-                  name="shield-checkmark-outline"
-                  size={21}
-                  color={colors.red}
-                />
-              </View>
+              <Text style={styles.badge}>Ban-IA</Text>
+              <Text style={styles.headerTitle}>Tu banco construye la respuesta contigo.</Text>
+              <Text style={styles.headerSubtitle}>Inicia sesión para consultar, analizar y operar tus finanzas en tiempo real.</Text>
             </View>
 
-            <View style={styles.field}>
-              <Text style={styles.fieldLabel}>Usuario</Text>
-              <View style={styles.inputShell}>
-                <Ionicons
-                  name="person-outline"
-                  size={18}
-                  color={colors.slate}
-                />
+            {/* TARJETA FLOTANTE DE ACCESO */}
+            <View style={styles.formCard}>
+              <Text style={styles.cardTitle}>Inicia sesión</Text>
+              <Text style={styles.cardDescription}>Ingresa tus credenciales de acceso autorizadas</Text>
+
+              {/* INPUT USUARIO */}
+              <Text style={styles.inputLabel}>Usuario</Text>
+              <View style={[styles.inputWrapper, isUserFocused && styles.inputWrapperFocused]}>
+                <Feather name="user" size={18} color={isUserFocused ? "#EB0029" : "#A2A9AD"} style={styles.inputIcon} />
                 <TextInput
-                  value={username}
-                  onChangeText={setUsername}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  textContentType="username"
-                  returnKeyType="next"
-                  placeholder="Escribe tu usuario"
-                  placeholderTextColor={colors.disabled}
                   style={styles.input}
-                  accessibilityLabel="Usuario"
+                  placeholder="Ingresa tu usuario"
+                  placeholderTextColor="#A2A9AD"
+                  value={usuario}
+                  onChangeText={setUsuario}
+                  onFocus={() => setIsUserFocused(true)}
+                  onBlur={() => setIsUserFocused(false)}
+                  autoCapitalize="none"
+                  returnKeyType="next"
                 />
               </View>
-            </View>
 
-            <View style={styles.field}>
-              <Text style={styles.fieldLabel}>Contraseña</Text>
-              <View style={styles.inputShell}>
-                <Ionicons
-                  name="lock-closed-outline"
-                  size={18}
-                  color={colors.slate}
-                />
+              {/* INPUT CONTRASEÑA */}
+              <Text style={styles.inputLabel}>Contraseña</Text>
+              <View style={[styles.inputWrapper, isPasswordFocused && styles.inputWrapperFocused]}>
+                <Feather name="lock" size={18} color={isPasswordFocused ? "#EB0029" : "#A2A9AD"} style={styles.inputIcon} />
                 <TextInput
+                  style={styles.input}
+                  placeholder="Ingresa tu contraseña"
+                  placeholderTextColor="#A2A9AD"
+                  secureTextEntry={!isPasswordVisible}
                   value={password}
                   onChangeText={setPassword}
-                  secureTextEntry={!showPassword}
-                  textContentType="password"
+                  onFocus={() => setIsPasswordFocused(true)}
+                  onBlur={() => setIsPasswordFocused(false)}
                   returnKeyType="done"
                   onSubmitEditing={submit}
-                  placeholder="Escribe tu contraseña"
-                  placeholderTextColor={colors.disabled}
-                  style={styles.input}
-                  accessibilityLabel="Contraseña"
                 />
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    showPassword ? "Ocultar contraseña" : "Mostrar contraseña"
-                  }
-                  hitSlop={8}
-                  onPress={() => setShowPassword((value) => !value)}
-                >
-                  <Ionicons
-                    name={showPassword ? "eye-off-outline" : "eye-outline"}
-                    size={19}
-                    color={colors.slate}
-                  />
-                </Pressable>
+                <TouchableOpacity style={styles.eyeButton} onPress={() => setIsPasswordVisible(!isPasswordVisible)}>
+                  <Feather name={isPasswordVisible ? "eye-off" : "eye"} size={20} color="#586670" />
+                </TouchableOpacity>
               </View>
+
+              <TouchableOpacity style={styles.forgotPassword}>
+                <Text style={styles.forgotPasswordText}>¿Olvidaste tu contraseña?</Text>
+              </TouchableOpacity>
+
+              {/* ERROR DE BACKEND */}
+              {authError ? (
+                <View style={styles.errorBox} accessibilityRole="alert">
+                  <Feather name="alert-circle" size={18} color="#EB0029" />
+                  <Text style={styles.errorText}>{authError}</Text>
+                </View>
+              ) : null}
+
+              {/* BOTÓN PRINCIPAL */}
+              <TouchableOpacity 
+                style={[styles.primaryButton, authLoading && styles.primaryDisabled]} 
+                activeOpacity={0.85}
+                onPress={submit}
+                disabled={authLoading}
+              >
+                <Text style={styles.primaryButtonText}>Continuar</Text>
+                <Feather name="arrow-right" size={18} color="#FFFFFF" style={{ marginLeft: 8 }} />
+              </TouchableOpacity>
             </View>
 
-            {authError ? (
-              <View style={styles.errorBox} accessibilityRole="alert">
-                <Ionicons
-                  name="alert-circle-outline"
-                  size={18}
-                  color={colors.red}
-                />
-                <Text style={styles.errorText}>{authError}</Text>
-              </View>
-            ) : null}
-
-            <Pressable
-              accessibilityRole="button"
-              disabled={authLoading}
-              onPress={submit}
-              style={({ pressed }) => [
-                styles.primaryButton,
-                authLoading && styles.primaryDisabled,
-                pressed && styles.primaryPressed,
-              ]}
-            >
-              {authLoading ? (
-                <ActivityIndicator size="small" color={colors.surface} />
-              ) : (
-                <>
-                  <Text style={styles.primaryButtonText}>Continuar</Text>
-                  <Ionicons
-                    name="arrow-forward"
-                    size={18}
-                    color={colors.surface}
-                  />
-                </>
-              )}
-            </Pressable>
-          </View>
-
-          <View style={styles.techRow}>
-            <Text style={styles.techText}>IA</Text>
-            <View style={styles.techDot} />
-            <Text style={styles.techText}>MCP</Text>
-            <View style={styles.techDot} />
-            <Text style={styles.techText}>INTERFAZ EN TIEMPO REAL</Text>
-          </View>
-        </ScrollView>
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        </Animated.View>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
-  safeArea: {
-    flex: 1,
-    backgroundColor: colors.red,
+  mainContainer: { flex: 1, backgroundColor: '#EB0029' },
+  flexContainer: { flex: 1 },
+  loadingScreen: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFFFFF' },
+  
+  // Pantalla de carga fija y centrada en toda la pantalla
+  splashScreen: { 
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#EB0029', 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    zIndex: 999 
   },
-  scrollContent: {
-    flexGrow: 1,
-    backgroundColor: colors.canvas,
-    paddingBottom: spacing.xl,
+  
+  splashLogoLarge: { width: 220, height: 75, tintColor: '#FFFFFF' }, 
+  verifyingText: { fontFamily: 'Gotham-Bold', color: '#FFFFFF', fontSize: 16, marginTop: 20, letterSpacing: 0.5, textAlign: 'center' },
+  subVerifyingText: { fontSize: 12, color: 'rgba(255,255,255,0.8)', marginTop: 6, textAlign: 'center' },
+  
+  scrollContent: { flexGrow: 1, backgroundColor: '#F4F5F7' },
+
+  // Header superior alineado desde arriba correctamente
+  header: { 
+    backgroundColor: '#EB0029', 
+    paddingTop: Platform.OS === 'ios' ? 60 : 54, 
+    paddingHorizontal: 24, 
+    paddingBottom: 75,
+    alignItems: 'flex-start',
+    width: '100%'
   },
-  hero: {
-    minHeight: 300,
-    overflow: "hidden",
-    backgroundColor: colors.red,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
-    paddingBottom: 80,
+  logoRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 20, alignSelf: 'flex-start' },
+  headerLogo: { width: 140, height: 35, tintColor: '#FFFFFF' }, 
+  badge: { fontFamily: 'Gotham-Black', color: '#FFFFFF', fontSize: 10, letterSpacing: 1.5, marginBottom: 8, textTransform: 'uppercase', textAlign: 'left' },
+  headerTitle: { fontFamily: 'Gotham-Bold', color: '#FFFFFF', fontSize: 24, lineHeight: 30, marginBottom: 8, textAlign: 'left' },
+  headerSubtitle: { color: '#FFFFFF', fontSize: 13, lineHeight: 19, opacity: 0.9, textAlign: 'left' },
+  
+  formCard: { 
+    backgroundColor: '#FFFFFF', 
+    marginHorizontal: 20, 
+    marginTop: -35, 
+    borderRadius: 16, 
+    padding: 24, 
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: 4 }, 
+    shadowOpacity: 0.06, 
+    shadowRadius: 12, 
+    elevation: 5 
   },
-  brandRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 45,
+  cardTitle: { fontFamily: 'Gotham-Bold', fontSize: 22, color: '#323648', marginBottom: 4 },
+  cardDescription: { fontSize: 13, color: '#586670', marginBottom: 24 },
+  
+  inputLabel: { fontFamily: 'Gotham-Bold', fontSize: 12, color: '#323648', marginBottom: 6 },
+  inputWrapper: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    backgroundColor: '#FAFAFA', 
+    borderWidth: 1, 
+    borderColor: '#EAECEE', 
+    borderRadius: 8, 
+    marginBottom: 18 
   },
-  heroEyebrow: {
-    color: "#FFD7DE",
-    fontFamily,
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 1.8,
+  inputWrapperFocused: { borderColor: '#EB0029', backgroundColor: '#FFFFFF' },
+  inputIcon: { paddingLeft: 16 },
+  input: { flex: 1, paddingHorizontal: 12, height: 46, fontSize: 15, color: '#323648', fontFamily: 'Gotham-Bold' },
+  eyeButton: { padding: 14 },
+  
+  forgotPassword: { alignSelf: 'flex-end', marginBottom: 20 },
+  forgotPasswordText: { fontFamily: 'Gotham-Bold', color: '#EB0029', fontSize: 13 },
+  
+  errorBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FDECEF', padding: 12, borderRadius: 8, marginBottom: 16 },
+  errorText: { fontFamily: 'Gotham-Bold', fontSize: 12, color: '#EB0029', marginLeft: 8, flex: 1 },
+  
+  primaryButton: { 
+    backgroundColor: '#EB0029', 
+    height: 48, 
+    borderRadius: 8, 
+    flexDirection: 'row',
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    shadowColor: '#EB0029', 
+    shadowOffset: { width: 0, height: 3 }, 
+    shadowOpacity: 0.2, 
+    shadowRadius: 6, 
+    elevation: 3 
   },
-  heroTitle: {
-    maxWidth: 330,
-    color: colors.surface,
-    fontFamily,
-    fontSize: 29,
-    lineHeight: 35,
-    fontWeight: "700",
-    letterSpacing: -0.6,
-    marginTop: 7,
-  },
-  heroBody: {
-    maxWidth: 305,
-    color: "#FFE9ED",
-    fontFamily,
-    fontSize: 13,
-    lineHeight: 19,
-    marginTop: spacing.sm,
-  },
-  heroDecorationOne: {
-    position: "absolute",
-    width: 180,
-    height: 180,
-    borderRadius: 90,
-    borderWidth: 35,
-    borderColor: "rgba(255,255,255,0.08)",
-    right: -83,
-    bottom: -45,
-  },
-  heroDecorationTwo: {
-    position: "absolute",
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    borderWidth: 18,
-    borderColor: "rgba(255,255,255,0.07)",
-    right: 36,
-    top: 75,
-  },
-  loginCard: {
-    marginHorizontal: spacing.md,
-    marginTop: -54,
-    borderRadius: 18,
-    backgroundColor: colors.surface,
-    padding: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  cardHeading: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: spacing.lg,
-  },
-  cardTitle: {
-    color: colors.charcoal,
-    fontFamily,
-    fontSize: 22,
-    fontWeight: "700",
-  },
-  cardSubtitle: {
-    color: colors.slate,
-    fontFamily,
-    fontSize: 11,
-    marginTop: 3,
-  },
-  lockIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 13,
-    backgroundColor: colors.errorSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  field: {
-    marginBottom: spacing.md,
-  },
-  fieldLabel: {
-    color: colors.slate,
-    fontFamily,
-    fontSize: 12,
-    marginBottom: 5,
-  },
-  inputShell: {
-    minHeight: 50,
-    borderRadius: radii.input,
-    backgroundColor: colors.canvas,
-    borderWidth: 1,
-    borderColor: colors.canvasStrong,
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-  },
-  input: {
-    flex: 1,
-    color: colors.charcoal,
-    fontFamily,
-    fontSize: 15,
-    fontWeight: "600",
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 0,
-  },
-  errorBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderRadius: 8,
-    backgroundColor: colors.errorSoft,
-    padding: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  errorText: {
-    flex: 1,
-    color: colors.red,
-    fontFamily,
-    fontSize: 11,
-    lineHeight: 15,
-    marginLeft: 7,
-  },
-  primaryButton: {
-    minHeight: 45,
-    borderRadius: radii.button,
-    backgroundColor: colors.red,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.sm,
-    paddingHorizontal: spacing.md,
-  },
-  primaryPressed: {
-    backgroundColor: colors.redDark,
-  },
-  primaryDisabled: {
-    backgroundColor: colors.disabled,
-  },
-  primaryButtonText: {
-    color: colors.surface,
-    fontFamily,
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  techRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: spacing.lg,
-  },
-  techText: {
-    color: colors.muted,
-    fontFamily,
-    fontSize: 9,
-    fontWeight: "700",
-    letterSpacing: 0.6,
-  },
-  techDot: {
-    width: 3,
-    height: 3,
-    borderRadius: 2,
-    backgroundColor: colors.disabled,
-    marginHorizontal: 8,
-  },
+  primaryDisabled: { backgroundColor: '#CFD2D3', shadowOpacity: 0 },
+  primaryButtonText: { fontFamily: 'Gotham-Bold', color: '#FFFFFF', fontSize: 15, letterSpacing: 0.3 }
 });
