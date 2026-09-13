@@ -51,6 +51,22 @@ test("las nuevas tools MCP administran contactos, cuentas y analítica", async (
   assert.equal(registered.account.name, "Carlos");
   assert.equal(registered.account.clabe, "012180001234567890");
 
+  // Registrar una CLABE que no pertenece a ningún usuario real debe
+  // permitirse, pero la transferencia debe fallar al confirmar.
+  await assert.rejects(
+    () =>
+      mcp.callTool("createTransaction", {
+        fromUserId: "u2",
+        registeredName: "Carlos",
+        toAlias: "Carlos",
+        amount: 10,
+        concept: "CLABE inexistente",
+      }),
+    (error) =>
+      error.code === "CLABE_NOT_FOUND" &&
+      /ninguna cuenta del sistema/i.test(error.message),
+  );
+
   const updatedContact = await mcp.callTool("update_contact", {
     userId: "u2",
     contact_id: registered.account.id,

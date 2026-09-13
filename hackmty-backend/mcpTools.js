@@ -1288,6 +1288,26 @@ function transactionResult(transaction, idempotentReplay = false) {
   };
 }
 
+async function requireRealClabeAccount(storage, clabe, options = {}) {
+  const normalized = normalizeClabe(clabe);
+  if (!normalized) {
+    throw new ToolError(
+      "CLABE_NOT_FOUND",
+      "La cuenta registrada no tiene una CLABE asociada",
+      false,
+    );
+  }
+  const linked = await findAccountOwner(storage, normalized, options);
+  if (!linked) {
+    throw new ToolError(
+      "CLABE_NOT_FOUND",
+      "La CLABE no pertenece a ninguna cuenta del sistema con la que se pueda iniciar sesión",
+      false,
+    );
+  }
+  return linked;
+}
+
 async function createMemoryTransaction(storage, args) {
   return storage.withLock(async () => {
     const resolution = resolveStoredContact(
@@ -1306,27 +1326,27 @@ async function createMemoryTransaction(storage, args) {
       return transactionResult(existing, true);
     }
 
+    const linkedAccount = await requireRealClabeAccount(storage, args.clabe);
+    contact.contact_user_id = linkedAccount.user._id;
+    contact.account_id = linkedAccount.account.account_id;
+    contact.bank = linkedAccount.account.bank || contact.bank || "Banorte";
+
     const sender = storage.data.users.find((user) => user._id === args.fromUserId);
-    const recipient = contact.contact_user_id
-      ? storage.data.users.find(
-          (user) => user._id === contact.contact_user_id,
-        )
-      : null;
-    if (!sender || (contact.contact_user_id && !recipient)) {
+    const recipient = linkedAccount.user;
+    if (!sender || !recipient) {
       throw new ToolError(
         "USER_NOT_FOUND",
         "No se encontró una cuenta participante",
       );
     }
     const senderAccount = selectSpendingAccount(sender.accounts);
-    const recipientAccount = recipient
-      ? recipient.accounts.find(
-          (account) =>
-            account.account_id === contact.account_id ||
-            accountClabe(account) === args.clabe,
-        ) || selectSpendingAccount(recipient.accounts)
-      : null;
-    if (!senderAccount || (recipient && !recipientAccount)) {
+    const recipientAccount =
+      recipient.accounts.find(
+        (account) =>
+          account.account_id === linkedAccount.account.account_id ||
+          accountClabe(account) === args.clabe,
+      ) || linkedAccount.account;
+    if (!senderAccount || !recipientAccount) {
       throw new ToolError("ACCOUNT_NOT_FOUND", "No se encontró una cuenta participante");
     }
     if (normalizeMoney(senderAccount.balance) < args.amount) {
@@ -1334,16 +1354,14 @@ async function createMemoryTransaction(storage, args) {
     }
 
     senderAccount.balance = normalizeMoney(senderAccount.balance - args.amount);
-    if (recipientAccount) {
-      recipientAccount.balance = normalizeMoney(
-        recipientAccount.balance + args.amount,
-      );
-    }
+    recipientAccount.balance = normalizeMoney(
+      recipientAccount.balance + args.amount,
+    );
     const transaction = {
       _id: `tx_${randomUUID()}`,
       request_id: args.requestId,
       from_user_id: args.fromUserId,
-      to_user_id: recipient?._id || null,
+      to_user_id: recipient._id,
       contact_id: args.contactId,
       to_alias: args.registeredName || args.toAlias,
       to_alias_key: args.alias_key,
@@ -1351,9 +1369,9 @@ async function createMemoryTransaction(storage, args) {
       recipient_name: args.registeredName || args.toAlias,
       account_number: args.clabe,
       clabe: args.clabe,
-      bank: args.bank,
+      bank: args.bank || linkedAccount.account.bank || "Banorte",
       from_account: senderAccount.account_id,
-      to_account: recipientAccount?.account_id || contact.account_id,
+      to_account: recipientAccount.account_id,
       amount: args.amount,
       concept: args.concept,
       currency: "MXN",
@@ -1384,22 +1402,45 @@ async function loadMongoTransferContext(storage, args, session) {
   }
 
   const contact = resolution.record;
+  const linkedAccount = await requireRealClabeAccount(
+    storage,
+    args.clabe,
+    options,
+  );
+  contact.contact_user_id = linkedAccount.user._id;
+  contact.account_id = linkedAccount.account.account_id;
+  contact.bank = linkedAccount.account.bank || contact.bank || "Banorte";
+  args.bank = args.bank || linkedAccount.account.bank || "Banorte";
+
+  // Persiste el vínculo real si la cuenta se registró con CLABE huérfana.
+  if (storage.kind !== "memory") {
+    await storage.db.collection("contacts").updateOne(
+      { owner_id: args.fromUserId, _id: contact._id },
+      {
+        $set: {
+          contact_user_id: linkedAccount.user._id,
+          account_id: linkedAccount.account.account_id,
+          bank: contact.bank,
+          clabe: args.clabe,
+        },
+      },
+      options,
+    );
+  }
+
   const sender = await findUser(storage, args.fromUserId, options);
-  const recipient = contact.contact_user_id
-    ? await findUser(storage, contact.contact_user_id, options)
-    : null;
-  if (!sender || (contact.contact_user_id && !recipient)) {
+  const recipient = linkedAccount.user;
+  if (!sender || !recipient) {
     throw new ToolError("USER_NOT_FOUND", "No se encontró una cuenta participante");
   }
   const senderAccount = selectSpendingAccount(sender.accounts);
-  const recipientAccount = recipient
-    ? recipient.accounts.find(
-        (account) =>
-          account.account_id === contact.account_id ||
-          accountClabe(account) === args.clabe,
-      ) || selectSpendingAccount(recipient.accounts)
-    : null;
-  if (!senderAccount || (recipient && !recipientAccount)) {
+  const recipientAccount =
+    recipient.accounts.find(
+      (account) =>
+        account.account_id === linkedAccount.account.account_id ||
+        accountClabe(account) === args.clabe,
+    ) || linkedAccount.account;
+  if (!senderAccount || !recipientAccount) {
     throw new ToolError("ACCOUNT_NOT_FOUND", "No se encontró una cuenta participante");
   }
   return { contact, recipient, recipientAccount, senderAccount };
@@ -1410,7 +1451,7 @@ function makeTransactionDocument(args, context) {
   return {
     request_id: args.requestId,
     from_user_id: args.fromUserId,
-    to_user_id: context.recipient?._id || null,
+    to_user_id: context.recipient._id,
     contact_id: args.contactId,
     to_alias: registeredName,
     to_alias_key: args.alias_key,
@@ -1418,10 +1459,9 @@ function makeTransactionDocument(args, context) {
     recipient_name: registeredName,
     account_number: args.clabe,
     clabe: args.clabe,
-    bank: args.bank,
+    bank: args.bank || context.contact.bank || "Banorte",
     from_account: context.senderAccount.account_id,
-    to_account:
-      context.recipientAccount?.account_id || context.contact.account_id,
+    to_account: context.recipientAccount.account_id,
     amount: args.amount,
     concept: args.concept,
     currency: "MXN",
@@ -1456,21 +1496,19 @@ async function applyMongoTransfer(storage, args, session) {
     throw new ToolError("INSUFFICIENT_FUNDS", "Fondos insuficientes");
   }
 
-  if (context.recipient) {
-    const credit = await storage.db.collection("users").updateOne(
-      {
-        _id: context.recipient._id,
-        "accounts.account_id": context.recipientAccount.account_id,
-      },
-      { $inc: { "accounts.$.balance": args.amount } },
-      options,
+  const credit = await storage.db.collection("users").updateOne(
+    {
+      _id: context.recipient._id,
+      "accounts.account_id": context.recipientAccount.account_id,
+    },
+    { $inc: { "accounts.$.balance": args.amount } },
+    options,
+  );
+  if (credit.modifiedCount !== 1) {
+    throw new ToolError(
+      "ACCOUNT_NOT_FOUND",
+      "No se pudo abonar a la cuenta destino",
     );
-    if (credit.modifiedCount !== 1) {
-      throw new ToolError(
-        "ACCOUNT_NOT_FOUND",
-        "No se pudo abonar a la cuenta destino",
-      );
-    }
   }
 
   const document = makeTransactionDocument(args, context);
