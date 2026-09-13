@@ -4,14 +4,17 @@ const { randomUUID } = require("node:crypto");
 const { ObjectId } = require("mongodb");
 const { z } = require("zod");
 const { aliasKey } = require("./demoData");
-const { getStorage } = require("./db");
+const { classifyMongoError, getStorage } = require("./db");
 const {
   canonicalContact,
+  normalizeClabe,
   resolveContact,
 } = require("./contactResolver");
 
 const MAX_TRANSACTION_AMOUNT = 1_000_000;
 const MAX_INTERACTION_BYTES = 64 * 1024;
+const CLABE_MIN_LENGTH = 10;
+const CLABE_MAX_LENGTH = 18;
 
 class ToolError extends Error {
   constructor(code, message, recoverable = true) {
@@ -49,12 +52,24 @@ const contactIdSchema = z
   .max(128)
   .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/, "contactId inválido");
 const contactNameSchema = z.string().trim().min(2).max(120);
+const registeredNameSchema = z
+  .string()
+  .trim()
+  .min(2)
+  .max(64)
+  .regex(/^[\p{L}\p{N}][\p{L}\p{N} ._-]*$/u, "nombre de cuenta inválido");
 const accountNumberSchema = z
   .string()
   .trim()
   .min(5)
   .max(40)
   .regex(/^[A-Za-z0-9][A-Za-z0-9 -]*$/, "accountNumber inválido");
+const clabeSchema = z
+  .string()
+  .trim()
+  .min(CLABE_MIN_LENGTH)
+  .max(CLABE_MAX_LENGTH)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9 -]*$/, "CLABE inválida");
 const bankSchema = z.string().trim().min(2).max(80);
 const accountTypeSchema = z.enum([
   "checking",
@@ -111,20 +126,29 @@ const inputSchemas = Object.freeze({
   getCreditPlans: { accountId: accountIdSchema },
   createTransaction: {
     fromUserId: userIdSchema,
-    toAlias: aliasSchema,
+    toAlias: aliasSchema.optional(),
+    registeredName: registeredNameSchema.optional(),
     amount: amountSchema,
     concept: conceptSchema.optional(),
     contactId: contactIdSchema.optional(),
     accountNumber: accountNumberSchema.optional(),
+    clabe: clabeSchema.optional(),
     requestId: requestIdSchema.optional(),
   },
   get_contacts: { userId: userIdSchema },
+  register_account: {
+    userId: userIdSchema,
+    name: registeredNameSchema,
+    clabe: clabeSchema,
+    bank: bankSchema.optional(),
+  },
   add_contact: {
     userId: userIdSchema,
     name: contactNameSchema,
-    alias: aliasSchema,
-    accountNumber: accountNumberSchema,
-    bank: bankSchema,
+    alias: aliasSchema.optional(),
+    accountNumber: accountNumberSchema.optional(),
+    clabe: clabeSchema.optional(),
+    bank: bankSchema.optional(),
   },
   update_contact: {
     userId: userIdSchema,
@@ -133,13 +157,16 @@ const inputSchemas = Object.freeze({
     name: contactNameSchema.optional(),
     alias: aliasSchema.optional(),
     accountNumber: accountNumberSchema.optional(),
+    clabe: clabeSchema.optional(),
     bank: bankSchema.optional(),
   },
   add_account: {
     userId: userIdSchema,
     type: accountTypeSchema,
-    accountNumber: accountNumberSchema,
-    bank: bankSchema,
+    name: registeredNameSchema.optional(),
+    accountNumber: accountNumberSchema.optional(),
+    clabe: clabeSchema.optional(),
+    bank: bankSchema.optional(),
     currency: currencySchema.optional(),
     balance: z.number().finite().min(0).max(1_000_000_000).optional(),
     creditLimit: z.number().finite().positive().max(1_000_000_000).optional(),
@@ -186,7 +213,8 @@ const toolDefinitions = Object.freeze([
   },
   {
     name: "createTransaction",
-    description: "Ejecuta una transferencia confirmada hacia el alias de un contacto.",
+    description:
+      "Ejecuta una transferencia confirmada hacia una cuenta registrada por nombre y CLABE.",
     inputSchema: inputSchemas.createTransaction,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
   },
@@ -205,19 +233,27 @@ const toolDefinitions = Object.freeze([
   {
     name: "get_contacts",
     description:
-      "Obtiene contactos canónicos con id, alias, nombre completo, cuenta y banco.",
+      "Obtiene cuentas registradas con id, nombre, CLABE y banco.",
     inputSchema: inputSchemas.get_contacts,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
   },
   {
+    name: "register_account",
+    description:
+      "Registra una cuenta destino con un nombre personalizado y su CLABE.",
+    inputSchema: inputSchemas.register_account,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+  },
+  {
     name: "add_contact",
-    description: "Agrega un contacto bancario al perfil del usuario.",
+    description:
+      "Compatibilidad: registra una cuenta destino (nombre + CLABE).",
     inputSchema: inputSchemas.add_contact,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
   },
   {
     name: "update_contact",
-    description: "Actualiza nombre, alias, cuenta o banco de un contacto existente.",
+    description: "Actualiza nombre, CLABE o banco de una cuenta registrada.",
     inputSchema: inputSchemas.update_contact,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   },
@@ -290,7 +326,21 @@ function serializeDate(value) {
 }
 
 function normalizeAccountNumber(value) {
-  return String(value || "").replace(/\s+/g, "").toUpperCase();
+  return normalizeClabe(value);
+}
+
+function accountClabe(account) {
+  return normalizeClabe(account?.clabe || account?.account_number || "");
+}
+
+function contactRegisteredName(contact) {
+  return String(
+    contact?.name || contact?.alias || contact?.display_name || "",
+  ).trim();
+}
+
+function contactClabe(contact) {
+  return normalizeClabe(contact?.clabe || contact?.account_number || "");
 }
 
 function publicContact(record) {
@@ -298,13 +348,15 @@ function publicContact(record) {
   return {
     id: contact.id,
     contact_id: contact.id,
-    alias: contact.alias,
-    nickname: contact.nickname,
+    name: contact.name,
+    alias: contact.name,
+    nickname: contact.name,
     first_name: contact.firstName,
-    fullName: contact.fullName,
-    display_name: contact.fullName,
-    accountNumber: contact.accountNumber,
-    account_number: contact.accountNumber,
+    fullName: contact.name,
+    display_name: contact.name,
+    clabe: contact.clabe,
+    accountNumber: contact.clabe,
+    account_number: contact.clabe,
     account_id: contact.accountId,
     bank: contact.bank,
     user_id: contact.userId,
@@ -312,16 +364,35 @@ function publicContact(record) {
 }
 
 function idCandidates(value) {
-  return ObjectId.isValid(value)
-    ? [value, ObjectId.createFromHexString(value)]
-    : [value];
+  const text = String(value || "");
+  return /^[a-fA-F0-9]{24}$/.test(text)
+    ? [text, ObjectId.createFromHexString(text)]
+    : [text];
+}
+
+function sameRecord(left, right) {
+  return Boolean(left && right && serializeId(left._id) === serializeId(right._id));
+}
+
+function selectSpendingAccount(accounts = []) {
+  return (
+    accounts.find((account) => account.type === "checking") ||
+    accounts.find((account) => Number.isFinite(Number(account.balance))) ||
+    accounts[0] ||
+    null
+  );
 }
 
 async function findUser(storage, userId, options = {}) {
   if (storage.kind === "memory") {
-    return storage.data.users.find((user) => user._id === userId) || null;
+    return storage.data.users.find((user) => serializeId(user._id) === String(userId)) || null;
   }
-  return storage.db.collection("users").findOne({ _id: userId }, options);
+  return (
+    (await storage.db.collection("users").findOne(
+      { _id: { $in: idCandidates(userId) } },
+      options,
+    )) || null
+  );
 }
 
 async function getRecentTransactions(storage, userId) {
@@ -432,7 +503,7 @@ async function getContacts(input) {
     user_id: userId,
     contacts: contacts
       .map(publicContact)
-      .sort((left, right) => left.display_name.localeCompare(right.display_name, "es")),
+      .sort((left, right) => left.name.localeCompare(right.name, "es")),
   };
 }
 
@@ -466,23 +537,29 @@ async function findContactById(storage, userId, contactId, options = {}) {
 }
 
 async function findAccountOwner(storage, accountNumber, options = {}) {
+  const clabe = normalizeClabe(accountNumber);
+  if (!clabe) return null;
   if (storage.kind === "memory") {
     for (const user of storage.data.users) {
       const account = user.accounts.find(
-        (candidate) =>
-          normalizeAccountNumber(candidate.account_number) === accountNumber,
+        (candidate) => accountClabe(candidate) === clabe,
       );
       if (account) return { user, account };
     }
     return null;
   }
-  const user = await storage.db
-    .collection("users")
-    .findOne({ "accounts.account_number": accountNumber }, options);
+  const user = await storage.db.collection("users").findOne(
+    {
+      $or: [
+        { "accounts.clabe": clabe },
+        { "accounts.account_number": clabe },
+      ],
+    },
+    options,
+  );
   if (!user) return null;
   const account = user.accounts.find(
-    (candidate) =>
-      normalizeAccountNumber(candidate.account_number) === accountNumber,
+    (candidate) => accountClabe(candidate) === clabe,
   );
   return account ? { user, account } : null;
 }
@@ -490,58 +567,54 @@ async function findAccountOwner(storage, accountNumber, options = {}) {
 function makeContactDocument({
   userId,
   name,
-  alias,
-  accountNumber,
-  bank,
+  clabe,
+  bank = "Banorte",
   linkedAccount,
   contactId = `contact_${userId}_${randomUUID().replaceAll("-", "")}`,
 }) {
+  const registeredName = name.trim();
   return {
     _id: contactId,
     owner_id: userId,
     contact_user_id: linkedAccount?.user._id || null,
-    alias,
-    alias_key: aliasKey(alias),
-    nickname: alias,
-    first_name: name.split(/\s+/)[0],
-    display_name: name,
-    account_id:
-      linkedAccount?.account.account_id || `external_${accountNumber}`,
-    account_number: accountNumber,
-    bank,
+    name: registeredName,
+    name_key: aliasKey(registeredName),
+    clabe,
+    account_id: linkedAccount?.account.account_id || `external_${clabe}`,
+    bank: bank || linkedAccount?.account.bank || "Banorte",
+    created_at: new Date(),
   };
 }
 
-async function addContact(input) {
-  const parsed = parseInput("add_contact", input);
+async function registerAccount(input) {
+  const parsed = parseInput("register_account", input);
   const storage = getStorage();
   const owner = await findUser(storage, parsed.userId);
   if (!owner) {
     throw new ToolError("USER_NOT_FOUND", `No existe el usuario ${parsed.userId}`);
   }
-  const accountNumber = normalizeAccountNumber(parsed.accountNumber);
-  const alias = normalizeAlias(parsed.alias);
+  const clabe = normalizeClabe(parsed.clabe);
+  const name = parsed.name.trim();
   const operation = async () => {
     const contacts = await loadContacts(storage, parsed.userId);
     if (
       contacts.some(
         (contact) =>
-          aliasKey(contact.alias) === aliasKey(alias) ||
-          normalizeAccountNumber(contact.account_number) === accountNumber,
+          aliasKey(contactRegisteredName(contact)) === aliasKey(name) ||
+          contactClabe(contact) === clabe,
       )
     ) {
       throw new ToolError(
-        "CONTACT_ALREADY_EXISTS",
-        "Ya existe un contacto con ese alias o número de cuenta",
+        "ACCOUNT_ALREADY_REGISTERED",
+        "Ya existe una cuenta registrada con ese nombre o CLABE",
       );
     }
-    const linkedAccount = await findAccountOwner(storage, accountNumber);
+    const linkedAccount = await findAccountOwner(storage, clabe);
     const document = makeContactDocument({
       userId: parsed.userId,
-      name: parsed.name,
-      alias,
-      accountNumber,
-      bank: parsed.bank.trim(),
+      name,
+      clabe,
+      bank: parsed.bank?.trim() || linkedAccount?.account.bank || "Banorte",
       linkedAccount,
     });
     if (storage.kind === "memory") {
@@ -549,9 +622,28 @@ async function addContact(input) {
     } else {
       await storage.db.collection("contacts").insertOne(document);
     }
-    return { saved: true, contact: publicContact(document) };
+    return { saved: true, account: publicContact(document) };
   };
   return storage.kind === "memory" ? storage.withLock(operation) : operation();
+}
+
+async function addContact(input) {
+  const parsed = parseInput("add_contact", input);
+  const name = parsed.alias || parsed.name;
+  const clabe = parsed.clabe || parsed.accountNumber;
+  if (!name || !clabe) {
+    throw new ToolError(
+      "VALIDATION_ERROR",
+      "name/alias y clabe/accountNumber son obligatorios",
+    );
+  }
+  const result = await registerAccount({
+    userId: parsed.userId,
+    name,
+    clabe,
+    bank: parsed.bank,
+  });
+  return { saved: result.saved, contact: result.account };
 }
 
 async function updateContact(input) {
@@ -563,7 +655,13 @@ async function updateContact(input) {
       "contactId o contact_id es obligatorio",
     );
   }
-  if (!parsed.name && !parsed.alias && !parsed.accountNumber && !parsed.bank) {
+  if (
+    !parsed.name &&
+    !parsed.alias &&
+    !parsed.accountNumber &&
+    !parsed.clabe &&
+    !parsed.bank
+  ) {
     throw new ToolError(
       "VALIDATION_ERROR",
       "Indica al menos un campo para actualizar",
@@ -577,39 +675,37 @@ async function updateContact(input) {
       contactId,
     );
     if (!current) {
-      throw new ToolError("CONTACT_NOT_FOUND", "No se encontró el contacto");
+      throw new ToolError("CONTACT_NOT_FOUND", "No se encontró la cuenta registrada");
     }
-    const accountNumber = normalizeAccountNumber(
-      parsed.accountNumber || current.account_number,
+    const clabe = normalizeClabe(
+      parsed.clabe || parsed.accountNumber || contactClabe(current),
     );
-    const alias = normalizeAlias(parsed.alias || current.alias);
+    const name = String(
+      parsed.name || parsed.alias || contactRegisteredName(current),
+    ).trim();
     const contacts = await loadContacts(storage, parsed.userId);
     if (
       contacts.some(
         (contact) =>
           serializeId(contact._id) !== contactId &&
-          (aliasKey(contact.alias) === aliasKey(alias) ||
-            normalizeAccountNumber(contact.account_number) === accountNumber),
+          (aliasKey(contactRegisteredName(contact)) === aliasKey(name) ||
+            contactClabe(contact) === clabe),
       )
     ) {
       throw new ToolError(
-        "CONTACT_ALREADY_EXISTS",
-        "Otro contacto ya usa ese alias o número de cuenta",
+        "ACCOUNT_ALREADY_REGISTERED",
+        "Otra cuenta registrada ya usa ese nombre o CLABE",
       );
     }
-    const linkedAccount = await findAccountOwner(storage, accountNumber);
-    const name = parsed.name || current.display_name;
+    const linkedAccount = await findAccountOwner(storage, clabe);
     const changes = {
-      alias,
-      alias_key: aliasKey(alias),
-      nickname: alias,
-      first_name: name.split(/\s+/)[0],
-      display_name: name,
-      account_number: accountNumber,
+      name,
+      name_key: aliasKey(name),
+      clabe,
       bank: parsed.bank?.trim() || current.bank || "Banorte",
       contact_user_id: linkedAccount?.user._id || null,
       account_id:
-        linkedAccount?.account.account_id || `external_${accountNumber}`,
+        linkedAccount?.account.account_id || `external_${clabe}`,
     };
     if (storage.kind === "memory") {
       Object.assign(current, changes);
@@ -628,23 +724,27 @@ async function updateContact(input) {
 async function addAccount(input) {
   const parsed = parseInput("add_account", input);
   const storage = getStorage();
-  const accountNumber = normalizeAccountNumber(parsed.accountNumber);
+  const clabe = normalizeClabe(parsed.clabe || parsed.accountNumber || "");
+  if (!clabe) {
+    throw new ToolError("VALIDATION_ERROR", "clabe o accountNumber es obligatorio");
+  }
   const operation = async () => {
     const owner = await findUser(storage, parsed.userId);
     if (!owner) {
       throw new ToolError("USER_NOT_FOUND", `No existe el usuario ${parsed.userId}`);
     }
-    const linked = await findAccountOwner(storage, accountNumber);
+    const linked = await findAccountOwner(storage, clabe);
     if (linked) {
       throw new ToolError(
         "ACCOUNT_ALREADY_EXISTS",
-        "Ese número de cuenta ya está vinculado",
+        "Esa CLABE ya está vinculada",
       );
     }
     const account = {
       account_id: `acc_${parsed.userId}_${randomUUID().replaceAll("-", "")}`,
-      account_number: accountNumber,
-      bank: parsed.bank.trim(),
+      name: parsed.name?.trim() || "Cuenta nueva",
+      clabe,
+      bank: parsed.bank?.trim() || "Banorte",
       type: parsed.type,
       currency: parsed.currency || "MXN",
       ...(parsed.type === "credit_card"
@@ -659,9 +759,7 @@ async function addAccount(input) {
     if (storage.kind === "memory") {
       owner.accounts.push(account);
       for (const contact of storage.data.contacts) {
-        if (
-          normalizeAccountNumber(contact.account_number) === accountNumber
-        ) {
+        if (contactClabe(contact) === clabe) {
           contact.contact_user_id = parsed.userId;
           contact.account_id = account.account_id;
         }
@@ -671,11 +769,14 @@ async function addAccount(input) {
         .collection("users")
         .updateOne({ _id: parsed.userId }, { $push: { accounts: account } });
       await storage.db.collection("contacts").updateMany(
-        { account_number: accountNumber },
+        {
+          $or: [{ clabe }, { account_number: clabe }],
+        },
         {
           $set: {
             contact_user_id: parsed.userId,
             account_id: account.account_id,
+            clabe,
           },
         },
       );
@@ -778,9 +879,10 @@ function transactionForUser(transaction, userId, names) {
   const direction =
     transaction.from_user_id === userId ? "outgoing" : "incoming";
   const recipient =
+    transaction.registered_name ||
     transaction.recipient_name ||
-    names.get(transaction.to_user_id) ||
     transaction.to_alias ||
+    names.get(transaction.to_user_id) ||
     "Destinatario";
   const sender =
     names.get(transaction.from_user_id) || "Transferencia recibida";
@@ -792,13 +894,14 @@ function transactionForUser(transaction, userId, names) {
     timestamp: serializeDate(transaction.created_at),
     status: transaction.status,
     recipient,
-    recipientAlias: transaction.to_alias,
+    recipientAlias: transaction.registered_name || transaction.to_alias,
     sender,
     concept: transaction.concept || "",
     category: transactionCategory(transaction.concept),
     amount: normalizeMoney(transaction.amount),
     currency: transaction.currency || "MXN",
-    accountNumber: transaction.account_number || "",
+    accountNumber: transaction.clabe || transaction.account_number || "",
+    clabe: transaction.clabe || transaction.account_number || "",
     bank: transaction.bank || "Banorte",
   };
 }
@@ -965,51 +1068,79 @@ async function getCreditPlans(input) {
 }
 
 function resolveStoredContact(records, args) {
+  const queryName = args.registeredName || args.toAlias || "";
+  const queryClabe = normalizeClabe(args.clabe || args.accountNumber || "");
   const byId = args.contactId
-    ? records.find(
-        (contact) => serializeId(contact._id) === args.contactId,
-      )
+    ? records.find((contact) => {
+        const canonical = canonicalContact(contact);
+        return (
+          serializeId(contact._id) === args.contactId ||
+          canonical.id === args.contactId
+        );
+      })
     : null;
-  const byAccount = args.accountNumber
-    ? records.find(
-        (contact) =>
-          normalizeAccountNumber(contact.account_number) === args.accountNumber,
-      )
+  const byClabe = queryClabe
+    ? records.find((contact) => contactClabe(contact) === queryClabe)
     : null;
-  const byAlias = resolveContact(args.toAlias, records)?.record || null;
-  const resolved =
-    byId || byAccount || byAlias || null;
-  if (!resolved) {
-    throw new ToolError(
-      "CONTACT_NOT_FOUND",
-      `No se encontró el contacto "${args.toAlias}"`,
-    );
-  }
-  const canonical = canonicalContact(resolved);
-  const aliasContact = byAlias ? canonicalContact(byAlias) : null;
-  if (
-    (args.contactId && canonical.id !== args.contactId) ||
-    (args.accountNumber &&
-      normalizeAccountNumber(canonical.accountNumber) !==
-        args.accountNumber) ||
-    ((byId || byAccount) &&
-      (!aliasContact || aliasContact.id !== canonical.id))
-  ) {
+  const byName = queryName
+    ? resolveContact(queryName, records)?.record || null
+    : null;
+
+  if (byId && byClabe && !sameRecord(byId, byClabe)) {
     throw new ToolError(
       "CONTACT_ACCOUNT_MISMATCH",
-      "El contacto y la cuenta no corresponden al mismo registro",
+      "El nombre registrado y la CLABE no corresponden al mismo registro",
       false,
     );
   }
+
+  const resolved = byId || byName || byClabe || null;
+  if (!resolved) {
+    throw new ToolError(
+      "CONTACT_NOT_FOUND",
+      `No se encontró una cuenta registrada como "${queryName || queryClabe}"`,
+    );
+  }
+
+  const canonical = canonicalContact(resolved);
+  const clabe = canonical.clabe;
+  if (!clabe) {
+    throw new ToolError(
+      "CLABE_NOT_FOUND",
+      "La cuenta registrada no tiene una CLABE asociada",
+      false,
+    );
+  }
+
+  if (queryClabe && queryClabe !== clabe) {
+    throw new ToolError(
+      "CLABE_NOT_FOUND",
+      "No se encontró una cuenta registrada con esa CLABE",
+      false,
+    );
+  }
+
+  if (queryName) {
+    const nameMatch = resolveContact(queryName, [resolved]);
+    if (!nameMatch && !byId) {
+      throw new ToolError(
+        "CONTACT_NOT_FOUND",
+        `No se encontró una cuenta registrada como "${queryName}"`,
+      );
+    }
+  }
+
   return {
     record: resolved,
     args: {
       ...args,
-      toAlias: canonical.alias,
-      alias_key: aliasKey(canonical.alias),
+      toAlias: canonical.name,
+      registeredName: canonical.name,
+      alias_key: aliasKey(canonical.name),
       contactId: canonical.id,
-      accountNumber: normalizeAccountNumber(canonical.accountNumber),
-      recipientName: canonical.fullName,
+      accountNumber: clabe,
+      clabe,
+      recipientName: canonical.name,
       bank: canonical.bank,
     },
   };
@@ -1017,16 +1148,17 @@ function resolveStoredContact(records, args) {
 
 function validateReplay(
   transaction,
-  { fromUserId, alias_key, amount, concept, contactId, accountNumber },
+  { fromUserId, alias_key, amount, concept, contactId, accountNumber, clabe },
 ) {
+  const expectedClabe = normalizeClabe(clabe || accountNumber);
   if (
     transaction.from_user_id !== fromUserId ||
     transaction.to_alias_key !== alias_key ||
     normalizeMoney(transaction.amount) !== amount ||
     String(transaction.concept || "") !== String(concept || "") ||
     String(transaction.contact_id || "") !== String(contactId || "") ||
-    normalizeAccountNumber(transaction.account_number) !==
-      normalizeAccountNumber(accountNumber)
+    normalizeClabe(transaction.clabe || transaction.account_number) !==
+      expectedClabe
   ) {
     throw new ToolError(
       "IDEMPOTENCY_CONFLICT",
@@ -1037,15 +1169,30 @@ function validateReplay(
 }
 
 function transactionResult(transaction, idempotentReplay = false) {
+  const clabe = normalizeClabe(
+    transaction.clabe || transaction.account_number || "",
+  );
+  const registeredName =
+    transaction.registered_name ||
+    transaction.recipient_name ||
+    transaction.to_alias;
   return {
     transaction_id: serializeId(transaction._id),
     request_id: transaction.request_id,
-    from_user_id: transaction.from_user_id,
-    to_user_id: transaction.to_user_id,
-    contact_id: transaction.contact_id || "",
-    to_alias: transaction.to_alias,
-    recipient_name: transaction.recipient_name || transaction.to_alias,
-    account_number: transaction.account_number || "",
+    from_user_id: transaction.from_user_id
+      ? serializeId(transaction.from_user_id)
+      : transaction.from_user_id,
+    to_user_id: transaction.to_user_id
+      ? serializeId(transaction.to_user_id)
+      : null,
+    contact_id: transaction.contact_id
+      ? serializeId(transaction.contact_id)
+      : "",
+    to_alias: registeredName,
+    registered_name: registeredName,
+    recipient_name: registeredName,
+    account_number: clabe,
+    clabe,
     bank: transaction.bank || "Banorte",
     from_account: transaction.from_account,
     to_account: transaction.to_account,
@@ -1089,11 +1236,13 @@ async function createMemoryTransaction(storage, args) {
         "No se encontró una cuenta participante",
       );
     }
-    const senderAccount = sender.accounts.find((account) => account.type === "checking");
+    const senderAccount = selectSpendingAccount(sender.accounts);
     const recipientAccount = recipient
       ? recipient.accounts.find(
-          (account) => account.account_id === contact.account_id,
-        )
+          (account) =>
+            account.account_id === contact.account_id ||
+            accountClabe(account) === args.clabe,
+        ) || selectSpendingAccount(recipient.accounts)
       : null;
     if (!senderAccount || (recipient && !recipientAccount)) {
       throw new ToolError("ACCOUNT_NOT_FOUND", "No se encontró una cuenta participante");
@@ -1114,10 +1263,12 @@ async function createMemoryTransaction(storage, args) {
       from_user_id: args.fromUserId,
       to_user_id: recipient?._id || null,
       contact_id: args.contactId,
-      to_alias: contact.alias,
-      to_alias_key: contact.alias_key,
-      recipient_name: args.recipientName,
-      account_number: args.accountNumber,
+      to_alias: args.registeredName || args.toAlias,
+      to_alias_key: args.alias_key,
+      registered_name: args.registeredName || args.toAlias,
+      recipient_name: args.registeredName || args.toAlias,
+      account_number: args.clabe,
+      clabe: args.clabe,
       bank: args.bank,
       from_account: senderAccount.account_id,
       to_account: recipientAccount?.account_id || contact.account_id,
@@ -1158,11 +1309,13 @@ async function loadMongoTransferContext(storage, args, session) {
   if (!sender || (contact.contact_user_id && !recipient)) {
     throw new ToolError("USER_NOT_FOUND", "No se encontró una cuenta participante");
   }
-  const senderAccount = sender.accounts.find((account) => account.type === "checking");
+  const senderAccount = selectSpendingAccount(sender.accounts);
   const recipientAccount = recipient
     ? recipient.accounts.find(
-        (account) => account.account_id === contact.account_id,
-      )
+        (account) =>
+          account.account_id === contact.account_id ||
+          accountClabe(account) === args.clabe,
+      ) || selectSpendingAccount(recipient.accounts)
     : null;
   if (!senderAccount || (recipient && !recipientAccount)) {
     throw new ToolError("ACCOUNT_NOT_FOUND", "No se encontró una cuenta participante");
@@ -1171,15 +1324,18 @@ async function loadMongoTransferContext(storage, args, session) {
 }
 
 function makeTransactionDocument(args, context) {
+  const registeredName = args.registeredName || args.toAlias;
   return {
     request_id: args.requestId,
     from_user_id: args.fromUserId,
     to_user_id: context.recipient?._id || null,
     contact_id: args.contactId,
-    to_alias: context.contact.alias,
-    to_alias_key: context.contact.alias_key,
-    recipient_name: args.recipientName,
-    account_number: args.accountNumber,
+    to_alias: registeredName,
+    to_alias_key: args.alias_key,
+    registered_name: registeredName,
+    recipient_name: registeredName,
+    account_number: args.clabe,
+    clabe: args.clabe,
     bank: args.bank,
     from_account: context.senderAccount.account_id,
     to_account:
@@ -1243,8 +1399,13 @@ async function applyMongoTransfer(storage, args, session) {
 function transactionUnsupported(error) {
   return (
     error?.code === 20 ||
+    error?.code === 72 ||
     error?.codeName === "IllegalOperation" ||
-    /transaction numbers are only allowed|does not support transactions/i.test(error?.message || "")
+    error?.codeName === "InvalidOptions" ||
+    error?.codeName === "APIStrictError" ||
+    /transaction numbers are only allowed|does not support transactions|snapshot|multi-document transaction/i.test(
+      error?.message || "",
+    )
   );
 }
 
@@ -1347,16 +1508,26 @@ async function createMongoTransaction(storage, args) {
 
 async function createTransaction(input) {
   const parsed = parseInput("createTransaction", input);
-  const toAlias = normalizeAlias(parsed.toAlias);
+  const registeredName = String(
+    parsed.registeredName || parsed.toAlias || "",
+  ).trim();
+  if (!registeredName) {
+    throw new ToolError(
+      "VALIDATION_ERROR",
+      "registeredName o toAlias es obligatorio",
+    );
+  }
+  const toAlias = normalizeAlias(registeredName);
+  const clabe = normalizeClabe(parsed.clabe || parsed.accountNumber || "");
   const args = {
     ...parsed,
     toAlias,
+    registeredName: toAlias,
     alias_key: aliasKey(toAlias),
     amount: normalizeMoney(parsed.amount),
     concept: parsed.concept?.replace(/\s+/g, " ").trim() || "",
-    accountNumber: parsed.accountNumber
-      ? normalizeAccountNumber(parsed.accountNumber)
-      : "",
+    accountNumber: clabe,
+    clabe,
     requestId: parsed.requestId || randomUUID(),
   };
   const storage = getStorage();
@@ -1370,7 +1541,11 @@ async function createTransaction(input) {
     if (error instanceof ToolError) {
       throw error;
     }
-    throw new ToolError("STORAGE_ERROR", "No fue posible completar la transferencia");
+    const diagnosis = classifyMongoError(error);
+    console.error(
+      `[createTransaction] ${diagnosis.code}: ${error?.message || diagnosis.message}`,
+    );
+    throw new ToolError(diagnosis.code, diagnosis.message);
   }
 }
 
@@ -1445,6 +1620,7 @@ const handlers = Object.freeze({
   saveInteraction,
   saveRating,
   get_contacts: getContacts,
+  register_account: registerAccount,
   add_contact: addContact,
   update_contact: updateContact,
   add_account: addAccount,
@@ -1468,6 +1644,8 @@ module.exports = {
   inputSchemas,
   normalizeAlias,
   normalizeMoney,
+  registerAccount,
+  resolveStoredContact,
   saveInteraction,
   saveRating,
   toolDefinitions,

@@ -202,12 +202,35 @@ class MongoStorage {
       ),
       createOrReplaceIndex(
         this.db.collection("users"),
+        { "accounts.clabe": 1 },
+        {
+          name: "accounts.clabe_1",
+          unique: true,
+          partialFilterExpression: {
+            "accounts.clabe": { $type: "string" },
+          },
+        },
+      ),
+      createOrReplaceIndex(
+        this.db.collection("users"),
         { "accounts.account_number": 1 },
         {
           name: "accounts.account_number_1",
           unique: true,
           partialFilterExpression: {
             "accounts.account_number": { $type: "string" },
+          },
+        },
+      ),
+      createOrReplaceIndex(
+        this.db.collection("contacts"),
+        { owner_id: 1, name_key: 1 },
+        {
+          name: "owner_id_1_name_key_1",
+          unique: true,
+          partialFilterExpression: {
+            owner_id: { $type: "string" },
+            name_key: { $type: "string" },
           },
         },
       ),
@@ -232,6 +255,18 @@ class MongoStorage {
           partialFilterExpression: {
             owner_id: { $type: "string" },
             contact_user_id: { $type: "string" },
+          },
+        },
+      ),
+      createOrReplaceIndex(
+        this.db.collection("contacts"),
+        { owner_id: 1, clabe: 1 },
+        {
+          name: "owner_id_1_clabe_1",
+          unique: true,
+          partialFilterExpression: {
+            owner_id: { $type: "string" },
+            clabe: { $type: "string" },
           },
         },
       ),

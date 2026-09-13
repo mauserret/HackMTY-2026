@@ -92,7 +92,7 @@ test("WebSocket completa transferencia confirmada, rating y notificación", asyn
   );
   const health = await healthResponse.json();
   assert.equal(healthResponse.status, 200);
-  assert.equal(health.tool_count, 12);
+  assert.equal(health.tool_count, 13);
   assert.equal(health.storage, "memory");
   assert.equal(health.storage_reason, "MONGODB_URI_MISSING");
   assert.equal(
@@ -156,19 +156,21 @@ test("WebSocket completa transferencia confirmada, rating y notificación", asyn
   send(sender.ws, {
     type: "user_message",
     user_id: "u4",
-    text: "Mándale $1,500 pesos a Braulio por la cena",
+    text: "Mándale $1,500 pesos a Brau por la cena",
   });
   const form = await sender.collector.next(
     (message) =>
       message.type === "ui" && message.component === "transfer_form",
   );
   assert.equal(form.props.to_alias, "Brau");
+  assert.equal(form.props.registered_name, "Brau");
   assert.equal(form.props.amount, 1500);
   assert.deepEqual(form.props.initialValues, {
-    recipient: "Braulio Garcia",
+    recipient: "Brau",
     amount: "1500",
     concept: "Cena",
     accountNumber: "072180000004125000",
+    clabe: "072180000004125000",
     bank: "Banorte",
   });
   assert.equal(form.props.requires_confirmation, true);
@@ -190,6 +192,8 @@ test("WebSocket completa transferencia confirmada, rating y notificación", asyn
     request_id: form.props.request_id,
     contact_id: "contact_u1_u2",
     to_alias: "Timo",
+    registered_name: "Timo",
+    clabe: "072180000002083000",
     account_number: "072180000002083000",
     bank: "Banorte",
     amount: 1400,

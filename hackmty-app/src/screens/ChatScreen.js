@@ -34,6 +34,7 @@ export default function ChatScreen() {
   const {
     assistantStatus,
     confirmTransfer,
+    confirmRegisterAccount,
     connection,
     dismissNotification,
     messages,
@@ -71,6 +72,7 @@ export default function ChatScreen() {
             <DynamicUI
               message={item.data}
               onConfirmTransfer={confirmTransfer}
+              onConfirmRegisterAccount={confirmRegisterAccount}
               onSendMessage={sendMessage}
               onRate={rateInteraction}
               savedRating={item.rating}
@@ -79,7 +81,7 @@ export default function ChatScreen() {
         </View>
       );
     },
-    [confirmTransfer, rateInteraction, sendMessage],
+    [confirmRegisterAccount, confirmTransfer, rateInteraction, sendMessage],
   );
 
   return (
@@ -129,6 +131,7 @@ export default function ChatScreen() {
               <DynamicUI
                 message={WELCOME_UI}
                 onConfirmTransfer={confirmTransfer}
+                onConfirmRegisterAccount={confirmRegisterAccount}
                 onSendMessage={sendMessage}
                 onRate={rateInteraction}
               />

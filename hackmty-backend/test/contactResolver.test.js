@@ -11,19 +11,17 @@ const {
 const contacts = [
   {
     _id: "contact-u2-u1",
-    alias: "Mau",
-    nickname: "Mau",
-    first_name: "Mauricio",
-    display_name: "Mauricio Hernández",
-    account_number: "072180000001245678",
+    name: "Mau",
+    name_key: "mau",
+    clabe: "072180000001245678",
     account_id: "acc_u1_checking",
     bank: "Banorte",
   },
   {
     _id: "contact-u2-u4",
-    alias: "Brau",
-    display_name: "Braulio Garcia",
-    account_number: "072180000004125000",
+    name: "Brau",
+    name_key: "brau",
+    clabe: "072180000004125000",
     bank: "Banorte",
   },
 ];
@@ -31,10 +29,12 @@ const contacts = [
 test("normaliza un contacto al contrato canónico", () => {
   assert.deepEqual(canonicalContact(contacts[0]), {
     id: "contact-u2-u1",
+    name: "Mau",
     alias: "Mau",
     nickname: "Mau",
-    firstName: "Mauricio",
-    fullName: "Mauricio Hernández",
+    firstName: "Mau",
+    fullName: "Mau",
+    clabe: "072180000001245678",
     accountNumber: "072180000001245678",
     accountId: "acc_u1_checking",
     bank: "Banorte",
@@ -43,17 +43,14 @@ test("normaliza un contacto al contrato canónico", () => {
 });
 
 test("resuelve alias, primer nombre, typo y número de cuenta", () => {
-  assert.equal(resolveContact("Mau", contacts).contact.id, "contact-u2-u1");
+  assert.equal(resolveContact("Mau", contacts).contact.name, "Mau");
   assert.equal(
-    resolveContact("Mauricio", contacts).contact.accountNumber,
+    resolveContact("072180000001245678", contacts).contact.clabe,
     "072180000001245678",
   );
+  assert.equal(resolveContact("Mauu", contacts).contact.name, "Mau");
   assert.equal(
-    resolveContact("Maurcio", contacts).contact.fullName,
-    "Mauricio Hernández",
-  );
-  assert.equal(
-    resolveContact("072180000004125000", contacts).contact.alias,
+    resolveContact("072180000004125000", contacts).contact.name,
     "Brau",
   );
 });

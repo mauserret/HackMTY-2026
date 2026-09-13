@@ -12,6 +12,7 @@ const EXPECTED_TOOLS = Object.freeze([
   "saveInteraction",
   "saveRating",
   "get_contacts",
+  "register_account",
   "add_contact",
   "update_contact",
   "add_account",
@@ -60,7 +61,11 @@ function extractToolError(result) {
       error.recoverable !== false,
     );
   }
-  return new McpGatewayError("MCP_TOOL_ERROR", "La tool MCP falló");
+  const fallback =
+    (typeof payload?.message === "string" && payload.message) ||
+    (typeof payload?.value === "string" && payload.value) ||
+    "La tool MCP falló";
+  return new McpGatewayError("MCP_TOOL_ERROR", fallback);
 }
 
 class McpGateway {
@@ -248,5 +253,6 @@ module.exports = {
   EXPECTED_TOOLS,
   McpGateway,
   McpGatewayError,
+  extractToolError,
   parseTextContent,
 };

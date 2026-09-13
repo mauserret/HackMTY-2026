@@ -22,6 +22,8 @@ const UI_COMPONENTS = [
   "contacts_list",
   "credit_plan_table",
   "transfer_form",
+  "register_account_form",
+  "register_account_success",
   "clarification_card",
   "quick_actions",
   "financial_chart",
@@ -42,14 +44,17 @@ const transferInitialValuesSchema = z.object({
   amount: z.string().max(32),
   concept: z.string().max(120),
   accountNumber: z.string().max(40),
+  clabe: z.string().max(40),
   bank: z.string().max(80),
 });
 
 const transferPropsSchema = z.object({
   contact_id: z.string().max(128),
   to_alias: z.string().max(120),
+  registered_name: z.string().max(120),
   recipient_name: z.string().max(120),
   account_number: z.string().max(40),
+  clabe: z.string().max(40),
   bank: z.string().max(80),
   amount: z.number().finite().positive().max(1_000_000).nullable(),
   concept: z.string().max(120),
@@ -60,13 +65,27 @@ const transferPropsSchema = z.object({
   available_contacts: z.array(
     z.object({
       alias: z.string(),
+      name: z.string(),
       display_name: z.string(),
       contact_id: z.string(),
       fullName: z.string(),
       accountNumber: z.string(),
+      clabe: z.string(),
       bank: z.string(),
     }),
   ),
+});
+
+const registerAccountPropsSchema = z.object({
+  name: z.string().max(64),
+  clabe: z.string().max(40),
+  bank: z.string().max(80),
+  initialValues: z.object({
+    name: z.string().max(64),
+    clabe: z.string().max(40),
+    bank: z.string().max(80),
+  }),
+  missing_fields: z.array(z.enum(["name", "clabe"])),
 });
 
 const chatSessions = new Map();
@@ -82,12 +101,12 @@ Forma obligatoria:
 {"type":"ui","component":"nombre_del_componente","props":{...}}
 
 Componentes permitidos: balance_card, contacts_list, credit_plan_table,
-transfer_form, clarification_card, quick_actions y financial_chart. Usa
-financial_chart cuando el usuario pida gráficas, actividad o comparación de
-movimientos; chartType debe ser bar, pie o line. Usa transactions_summary para
-un historial general y transaction_detail para una sola operación. Nunca
-respondas con texto suelto o con type="text". Los datos financieros deben venir
-de tools.
+transfer_form, register_account_form, clarification_card, quick_actions y
+financial_chart. Usa financial_chart cuando el usuario pida gráficas, actividad
+o comparación de movimientos; chartType debe ser bar, pie o line. Usa
+transactions_summary para un historial general y transaction_detail para una
+sola operación. Nunca respondas con texto suelto o con type="text". Los datos
+financieros deben venir de tools.
 
 Reglas de seguridad:
 - La identidad indicada por el contexto del sistema es la única válida.
@@ -95,9 +114,12 @@ Reglas de seguridad:
 - createTransaction no está disponible. Una solicitud de transferencia solo
   produce transfer_form; incluso "confirmo" debe pedir usar el botón de
   confirmación de la interfaz.
-- En transferencias extrae persona, monto y concepto. Produce transfer_form
-  incluso si falta algún dato: usa initialValues con cadenas vacías para que
-  el usuario pueda completar o corregir todos los campos.
+- Las transferencias usan el nombre registrado de la cuenta (no el nombre legal)
+  y su CLABE. Si la CLABE no existe, el sistema debe fallar.
+- Para registrar una cuenta destino usa register_account_form con nombre y CLABE.
+- En transferencias extrae nombre registrado, monto y concepto. Produce
+  transfer_form incluso si falta algún dato: usa initialValues con cadenas
+  vacías para que el usuario pueda completar o corregir todos los campos.
 - Para solicitudes fuera de alcance, usa quick_actions.
 `.trim();
 
@@ -282,9 +304,12 @@ function parseAmount(text) {
 
 function contactTerms(contact) {
   const terms = [
+    contact.name,
     contact.alias,
     contact.display_name,
-    contact.display_name?.split(/\s+/)[0],
+    contact.clabe,
+    contact.accountNumber,
+    contact.account_number,
   ]
     .filter(Boolean)
     .map(normalizeText);
@@ -391,7 +416,7 @@ function extractTransferEntities(text, contacts, hints = {}, previous = {}) {
     null;
   const canonical = knownContact ? canonicalContact(knownContact) : null;
   const recipient =
-    canonical?.fullName ||
+    canonical?.name ||
     extractedRecipient ||
     cleanEntityText(hintedRecipient) ||
     previous.recipientName ||
@@ -414,9 +439,11 @@ function extractTransferEntities(text, contacts, hints = {}, previous = {}) {
   return {
     contact: knownContact,
     contactId: canonical?.id || "",
-    toAlias: canonical?.alias || recipient,
+    toAlias: canonical?.name || recipient,
+    registeredName: canonical?.name || recipient,
     recipient,
-    accountNumber: canonical?.accountNumber || "",
+    accountNumber: canonical?.clabe || "",
+    clabe: canonical?.clabe || "",
     bank: canonical?.bank || "",
     amount,
     concept,
@@ -437,9 +464,9 @@ function remember(userId, text, ui) {
   if (ui.component === "transfer_form") {
     memory.transferDraft = {
       contactId: ui.props.contact_id,
-      toAlias: ui.props.to_alias,
-      recipientName: ui.props.recipient_name,
-      accountNumber: ui.props.account_number,
+      toAlias: ui.props.registered_name || ui.props.to_alias,
+      recipientName: ui.props.registered_name || ui.props.recipient_name,
+      accountNumber: ui.props.clabe || ui.props.account_number,
       bank: ui.props.bank,
       amount: ui.props.amount,
       concept: ui.props.concept,
@@ -727,8 +754,8 @@ async function transferUI(userId, text, mcp, hints = {}) {
   memory.transferDraft = {
     contactId: entities.contactId,
     toAlias: entities.toAlias,
-    recipientName: entities.recipient,
-    accountNumber: entities.accountNumber,
+    recipientName: entities.registeredName || entities.recipient,
+    accountNumber: entities.clabe || entities.accountNumber,
     bank: entities.bank,
     amount: entities.amount,
     concept: entities.concept,
@@ -741,29 +768,34 @@ async function transferUI(userId, text, mcp, hints = {}) {
   const props = transferPropsSchema.parse({
     contact_id: entities.contactId,
     to_alias: entities.toAlias,
-    recipient_name: entities.recipient,
-    account_number: entities.accountNumber,
+    registered_name: entities.registeredName || entities.recipient,
+    recipient_name: entities.registeredName || entities.recipient,
+    account_number: entities.clabe || entities.accountNumber,
+    clabe: entities.clabe || entities.accountNumber,
     bank: entities.bank,
     amount: entities.amount,
     concept: entities.concept,
     currency: "MXN",
     requires_confirmation: true,
     initialValues: {
-      recipient: entities.recipient,
+      recipient: entities.registeredName || entities.recipient,
       amount: entities.amount === null ? "" : String(entities.amount),
       concept: entities.concept,
-      accountNumber: entities.accountNumber,
+      accountNumber: entities.clabe || entities.accountNumber,
+      clabe: entities.clabe || entities.accountNumber,
       bank: entities.bank,
     },
     missing_fields: missingFields,
     available_contacts: result.contacts.map((contact) => {
       const canonical = canonicalContact(contact);
       return {
-        alias: canonical.alias,
-        display_name: canonical.fullName,
+        alias: canonical.name,
+        name: canonical.name,
+        display_name: canonical.name,
         contact_id: canonical.id,
-        fullName: canonical.fullName,
-        accountNumber: canonical.accountNumber,
+        fullName: canonical.name,
+        accountNumber: canonical.clabe,
+        clabe: canonical.clabe,
         bank: canonical.bank,
       };
     }),
@@ -775,6 +807,59 @@ async function transferUI(userId, text, mcp, hints = {}) {
       title: missingFields.length
         ? "Completa tu transferencia"
         : "Revisa tu transferencia",
+      ...props,
+    },
+  };
+}
+
+function isRegisterAccountIntent(text) {
+  return (
+    /\b(registr|agreg|alta|guarda|guardar)\w*/.test(text) &&
+    /\b(cuenta|clabe|beneficiario|contacto)\w*/.test(text)
+  );
+}
+
+function extractClabe(text) {
+  const match = String(text || "").match(/\b(\d{10,18})\b/);
+  return match ? match[1] : "";
+}
+
+function extractRegisteredAccountName(text) {
+  const patterns = [
+    /\b(?:nombre|nombrar|llamad[ao]|como)\s+(?:como\s+|de\s+)?["“]?([\p{L}\p{N}][\p{L}\p{N}_-]{0,62})["”]?\s+(?:con\s+)?clabe\b/iu,
+    /\bnombr(?:e|ar)?\s+(?:como\s+|de\s+)?["“]?([\p{L}\p{N}][\p{L}\p{N}_-]{0,62})["”]?(?=\s|$)/iu,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return cleanEntityText(match[1]);
+  }
+  return "";
+}
+
+async function registerAccountUI(text) {
+  const name = extractRegisteredAccountName(text);
+  const clabe = extractClabe(text);
+  const missingFields = [];
+  if (!name) missingFields.push("name");
+  if (!clabe) missingFields.push("clabe");
+  const props = registerAccountPropsSchema.parse({
+    name,
+    clabe,
+    bank: "Banorte",
+    initialValues: {
+      name,
+      clabe,
+      bank: "Banorte",
+    },
+    missing_fields: missingFields,
+  });
+  return {
+    type: "ui",
+    component: "register_account_form",
+    props: {
+      title: missingFields.length
+        ? "Completa el registro de la cuenta"
+        : "Revisa el registro de la cuenta",
       ...props,
     },
   };
@@ -827,6 +912,9 @@ async function localFallback(userId, text, mcp) {
   if (isConfirmationIntent(normalized) && memory.transferDraft) {
     return confirmationCard();
   }
+  if (isRegisterAccountIntent(normalized)) {
+    return registerAccountUI(text);
+  }
   if (isTransactionDetailIntent(normalized)) {
     return transactionDetailUI(userId, text, mcp);
   }
@@ -851,7 +939,9 @@ async function localFallback(userId, text, mcp) {
   if (memory.transferDraft) {
     return transferUI(userId, text, mcp);
   }
-  return quickActions("Puedo ayudarte con saldos, contactos, crédito y transferencias.");
+  return quickActions(
+    "Puedo ayudarte con saldos, cuentas registradas, crédito y transferencias.",
+  );
 }
 
 function parseModelJson(raw) {
@@ -911,6 +1001,8 @@ async function hydrateModelUI(userId, text, modelUI, mcp) {
       return creditUI(userId, mcp);
     case "transfer_form":
       return transferUI(userId, text, mcp, modelUI.props);
+    case "register_account_form":
+      return registerAccountUI(text);
     case "financial_chart":
       return financialChartUI(userId, mcp, text, modelUI.props);
     case "transactions_summary":

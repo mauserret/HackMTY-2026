@@ -25,15 +25,19 @@ for (const definition of toolDefinitions) {
     async (input) => {
       try {
         const result = await handlers[definition.name](input);
+        const serialized = JSON.parse(JSON.stringify(result));
         return {
-          content: [{ type: "text", text: JSON.stringify(result) }],
-          structuredContent: result,
+          content: [{ type: "text", text: JSON.stringify(serialized) }],
+          structuredContent: serialized,
         };
       } catch (error) {
         const toolError =
           error instanceof ToolError
             ? error
-            : new ToolError("INTERNAL_ERROR", "La operación no pudo completarse");
+            : new ToolError(
+                "INTERNAL_ERROR",
+                error?.message || "La operación no pudo completarse",
+              );
         return {
           isError: true,
           content: [

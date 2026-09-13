@@ -34,11 +34,11 @@ test("extrae cantidades numéricas y coloquiales", () => {
 
 test("resuelve nombres y aliases a un contacto canónico", () => {
   const contacts = [
-    { alias: "Timo", display_name: "Timoteo Aguilar" },
-    { alias: "Brau", display_name: "Braulio Garcia" },
+    { name: "Timo", alias: "Timo", display_name: "Timo", clabe: "072180000002083000" },
+    { name: "Brau", alias: "Brau", display_name: "Brau", clabe: "072180000004125000" },
   ];
-  assert.equal(extractContact("envía 500 a Timoteo", contacts).alias, "Timo");
-  assert.equal(extractContact("depositar a Brau", contacts).display_name, "Braulio Garcia");
+  assert.equal(extractContact("envía 500 a Timo", contacts).name, "Timo");
+  assert.equal(extractContact("depositar a Brau", contacts).name, "Brau");
 });
 
 test("extrae persona y concepto de una solicitud de transferencia", () => {

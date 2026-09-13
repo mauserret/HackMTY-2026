@@ -4,7 +4,15 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { randomUUID } = require("node:crypto");
 const { clearMemory, localFallback } = require("../llm");
-const { EXPECTED_TOOLS, McpGateway } = require("../mcpClient");
+const { EXPECTED_TOOLS, McpGateway, extractToolError } = require("../mcpClient");
+
+test("expone el texto de error cuando MCP no manda JSON estructurado", () => {
+  const error = extractToolError({
+    isError: true,
+    content: [{ type: "text", text: "contactId inválido" }],
+  });
+  assert.equal(error.message, "contactId inválido");
+});
 
 async function memoryGateway(t) {
   const mcp = new McpGateway({
@@ -30,46 +38,61 @@ test("el subproceso MCP publica las doce tools registradas", async (t) => {
 test("las nuevas tools MCP administran contactos, cuentas y analítica", async (t) => {
   const mcp = await memoryGateway(t);
   const contacts = await mcp.callTool("get_contacts", { userId: "u2" });
-  const mau = contacts.contacts.find((contact) => contact.alias === "Mau");
-  assert.equal(mau.fullName, "Mauricio Hernández");
-  assert.equal(mau.accountNumber, "072180000001245678");
+  const mau = contacts.contacts.find((contact) => contact.name === "Mau");
+  assert.equal(mau.name, "Mau");
+  assert.equal(mau.clabe, "072180000001245678");
 
-  const addedContact = await mcp.callTool("add_contact", {
+  const registered = await mcp.callTool("register_account", {
     userId: "u2",
-    name: "Carlos Mendoza",
-    alias: "Carl",
-    accountNumber: "ES9121000418451234567891",
+    name: "Carlos",
+    clabe: "012180001234567890",
     bank: "Banco Demo",
   });
-  assert.equal(addedContact.contact.fullName, "Carlos Mendoza");
+  assert.equal(registered.account.name, "Carlos");
+  assert.equal(registered.account.clabe, "012180001234567890");
+
   const updatedContact = await mcp.callTool("update_contact", {
     userId: "u2",
-    contact_id: addedContact.contact.id,
-    alias: "Carlos",
+    contact_id: registered.account.id,
+    name: "Carlitos",
   });
-  assert.equal(updatedContact.contact.alias, "Carlos");
+  assert.equal(updatedContact.contact.name, "Carlitos");
   const externalTransfer = await mcp.callTool("createTransaction", {
     fromUserId: "u2",
     contactId: updatedContact.contact.id,
-    toAlias: "Carlos",
-    accountNumber: updatedContact.contact.accountNumber,
+    registeredName: "Carlitos",
+    toAlias: "Carlitos",
+    clabe: updatedContact.contact.clabe,
     amount: 50,
     concept: "Prueba",
   });
   assert.equal(externalTransfer.to_user_id, null);
-  assert.equal(
-    externalTransfer.account_number,
-    "ES9121000418451234567891",
+  assert.equal(externalTransfer.clabe, "012180001234567890");
+  assert.equal(externalTransfer.registered_name, "Carlitos");
+
+  await assert.rejects(
+    () =>
+      mcp.callTool("createTransaction", {
+        fromUserId: "u2",
+        registeredName: "Carlitos",
+        toAlias: "Carlitos",
+        clabe: "000000000000000000",
+        amount: 10,
+        concept: "Falla",
+      }),
+    (error) => error.code === "CLABE_NOT_FOUND",
   );
 
   const account = await mcp.callTool("add_account", {
     userId: "u2",
     type: "savings",
-    accountNumber: "072180000002999999",
+    name: "Ahorro",
+    clabe: "072180000002999999",
     bank: "Banorte",
     balance: 1200,
   });
   assert.equal(account.account.type, "savings");
+  assert.equal(account.account.clabe, "072180000002999999");
 
   const summary = await mcp.callTool("get_financial_summary", {
     userId: "u2",
@@ -143,13 +166,14 @@ test("el fallback consulta MCP y nunca transfiere en el primer turno", async (t)
   const before = await mcp.callTool("getBalance", { userId: "u1" });
   const ui = await localFallback(
     "u1",
-    "Mándale mil quinientos pesos a Timoteo, por favor",
+    "Mándale mil quinientos pesos a Timo, por favor",
     mcp,
   );
   const after = await mcp.callTool("getBalance", { userId: "u1" });
 
   assert.equal(ui.component, "transfer_form");
   assert.equal(ui.props.to_alias, "Timo");
+  assert.equal(ui.props.registered_name, "Timo");
   assert.equal(ui.props.amount, 1500);
   assert.deepEqual(after.accounts, before.accounts);
 });
@@ -169,14 +193,16 @@ test("precarga persona, monto y concepto aunque la persona no sea un contacto", 
     amount: "500",
     concept: "Cena",
     accountNumber: "",
+    clabe: "",
     bank: "",
   });
   assert.equal(ui.props.to_alias, "Carlos");
+  assert.equal(ui.props.registered_name, "Carlos");
   assert.equal(ui.props.missing_fields.length, 0);
   assert.equal(ui.props.available_contacts.length, 3);
 });
 
-test("Mau se resuelve al contacto y cuenta canónicos antes de transferir", async (t) => {
+test("Mau se resuelve al nombre registrado y CLABE antes de transferir", async (t) => {
   const mcp = await memoryGateway(t);
   t.after(() => clearMemory("u2"));
   const ui = await localFallback(
@@ -188,21 +214,41 @@ test("Mau se resuelve al contacto y cuenta canónicos antes de transferir", asyn
   assert.equal(ui.component, "transfer_form");
   assert.equal(ui.props.contact_id, "contact_u2_u1");
   assert.equal(ui.props.to_alias, "Mau");
-  assert.equal(ui.props.recipient_name, "Mauricio Hernández");
+  assert.equal(ui.props.registered_name, "Mau");
+  assert.equal(ui.props.recipient_name, "Mau");
+  assert.equal(ui.props.clabe, "072180000001245678");
   assert.equal(ui.props.account_number, "072180000001245678");
   assert.equal(ui.props.bank, "Banorte");
 
   const transaction = await mcp.callTool("createTransaction", {
     fromUserId: "u2",
     contactId: ui.props.contact_id,
+    registeredName: ui.props.registered_name,
     toAlias: ui.props.to_alias,
-    accountNumber: ui.props.account_number,
+    clabe: ui.props.clabe,
     amount: ui.props.amount,
     concept: ui.props.concept,
   });
   assert.equal(transaction.to_user_id, "u1");
-  assert.equal(transaction.recipient_name, "Mauricio Hernández");
-  assert.equal(transaction.account_number, "072180000001245678");
+  assert.equal(transaction.registered_name, "Mau");
+  assert.equal(transaction.recipient_name, "Mau");
+  assert.equal(transaction.clabe, "072180000001245678");
+});
+
+test("confirma la transferencia aunque el texto no coincida con el nombre registrado", async (t) => {
+  const mcp = await memoryGateway(t);
+  const transaction = await mcp.callTool("createTransaction", {
+    fromUserId: "u1",
+    contactId: "contact_u1_u2",
+    toAlias: "Destinatario",
+    registeredName: "Destinatario",
+    amount: 25,
+    concept: "Ajuste",
+  });
+  assert.equal(transaction.to_user_id, "u2");
+  assert.equal(transaction.to_alias, "Timo");
+  assert.equal(transaction.registered_name, "Timo");
+  assert.equal(transaction.recipient_name, "Timo");
 });
 
 test("genera el formulario editable aun cuando faltan entidades", async (t) => {
@@ -220,9 +266,23 @@ test("genera el formulario editable aun cuando faltan entidades", async (t) => {
     amount: "",
     concept: "",
     accountNumber: "",
+    clabe: "",
     bank: "",
   });
   assert.deepEqual(ui.props.missing_fields, ["recipient", "amount"]);
+});
+
+test("genera el formulario de registro de cuenta por nombre y CLABE", async (t) => {
+  const mcp = await memoryGateway(t);
+  t.after(() => clearMemory("u1"));
+  const ui = await localFallback(
+    "u1",
+    "Registra una cuenta llamada Renta con CLABE 072180000009999999",
+    mcp,
+  );
+  assert.equal(ui.component, "register_account_form");
+  assert.equal(ui.props.name, "Renta");
+  assert.equal(ui.props.clabe, "072180000009999999");
 });
 
 test("el fallback genera una gráfica con datos financieros reales", async (t) => {
@@ -272,6 +332,6 @@ test("genera pastel, línea, resumen y detalle transaccional", async (t) => {
     mcp,
   );
   assert.equal(detail.component, "transaction_detail");
-  assert.equal(detail.props.transaction.recipient, "Mauricio Hernández");
+  assert.equal(detail.props.transaction.recipient, "Mau");
   assert.equal(detail.props.transaction.concept, "Boletos");
 });

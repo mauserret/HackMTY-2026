@@ -123,14 +123,14 @@ estas decisiones.
     incompleta. La confirmación explícita usa los valores revisados por el
     usuario y MCP conserva la validación de contacto, fondos e idempotencia.
 25. **El catálogo MCP se amplió sin romper consumidores anteriores.** Se
-    conservaron las seis tools camelCase y se agregaron seis operaciones
-    snake_case para contactos, cuentas y analítica. El gateway valida las 12 y
-    las pruebas invocan cada nueva familia de operaciones.
-26. **Contacto visible y destino bancario son un solo registro canónico.** Un
-    resolver puntúa alias, apodo, primer nombre, nombre completo, cuenta y
-    errores tipográficos cortos. La transferencia transporta `contact_id`,
-    alias y `accountNumber`; si pertenecen a registros distintos, MCP rechaza
-    la operación.
+    conservaron las seis tools camelCase y se agregaron operaciones snake_case
+    para cuentas registradas y analítica, incluida `register_account`. El
+    gateway valida las 13 tools.
+26. **Las cuentas destino se registran por nombre + CLABE.** El documento en
+    `contacts` guarda `name`, `name_key` y `clabe`. La transferencia usa ese
+    nombre registrado (no el nombre legal). Si la CLABE no corresponde, MCP
+    responde `CLABE_NOT_FOUND`. `register_account_form` y
+    `register_account_success` son el esqueleto de UI del alta.
 27. **Las gráficas no incorporan otro módulo incompatible con Expo Go.**
     Barras, pastel y línea se renderizan con `react-native-svg`, versión
     alineada por Expo. El backend decide el tipo a partir de la solicitud y

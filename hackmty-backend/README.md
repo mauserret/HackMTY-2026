@@ -70,28 +70,29 @@ cliente
 - `llm.js` solo entrega a Gemini tools de lectura; una transferencia se ejecuta
   exclusivamente desde la confirmación del servidor.
 
-El catálogo MCP publica 12 tools. Las seis originales se conservan para
+El catálogo MCP publica 13 tools. Las seis originales se conservan para
 compatibilidad:
 
 - `getBalance({ userId })`
 - `getContacts({ userId })`
 - `getCreditPlans({ accountId })`
-- `createTransaction({ fromUserId, toAlias, amount, requestId? })`
+- `createTransaction({ fromUserId, toAlias|registeredName, amount, clabe?, requestId? })`
 - `saveInteraction({ userId, prompt, response })`
 - `saveRating({ interactionId, rating })`
 
 Las nuevas operaciones son:
 
 - `get_contacts({ userId })`
-- `add_contact({ userId, name, alias, accountNumber, bank })`
+- `register_account({ userId, name, clabe, bank? })`
+- `add_contact({ userId, name, alias?, accountNumber?, clabe?, bank? })`
 - `update_contact({ userId, contactId, ...changes })`
-- `add_account({ userId, type, accountNumber, bank, ... })`
+- `add_account({ userId, type, name?, clabe?, accountNumber?, bank?, ... })`
 - `get_financial_summary({ userId, startDate?, endDate?, groupBy? })`
 - `get_transaction_detail({ userId, transactionId })`
 
-`get_contacts` entrega el registro canónico (`id`, `alias`, `fullName`,
-`accountNumber`, `bank`). Las mutaciones validan propiedad y duplicados. Las
-tools analíticas solo devuelven operaciones en las que participa el usuario.
+`get_contacts` y `register_account` usan el contrato canónico (`name`, `clabe`,
+`bank`). Las transferencias resuelven por el **nombre registrado** y exigen que
+la CLABE exista; si no, responden `CLABE_NOT_FOUND`.
 
 ## WebSocket
 

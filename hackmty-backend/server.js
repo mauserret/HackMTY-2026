@@ -34,10 +34,31 @@ const eventSchemas = Object.freeze({
     request_id: z.string().trim().min(8).max(128),
     contact_id: z.string().trim().min(8).max(128).optional(),
     to_alias: z.string().trim().min(1).max(64).optional(),
-    account_number: z.string().trim().min(5).max(40).optional(),
-    bank: z.string().trim().min(2).max(80).optional(),
+    registered_name: z.string().trim().min(2).max(64).optional(),
+    account_number: z.preprocess(
+      (value) => (typeof value === "string" && !value.trim() ? undefined : value),
+      z.string().trim().min(5).max(40).optional(),
+    ),
+    clabe: z.preprocess(
+      (value) => (typeof value === "string" && !value.trim() ? undefined : value),
+      z.string().trim().min(10).max(18).optional(),
+    ),
+    bank: z.preprocess(
+      (value) => (typeof value === "string" && !value.trim() ? undefined : value),
+      z.string().trim().min(2).max(80).optional(),
+    ),
     amount: z.number().finite().positive().max(1_000_000).optional(),
     concept: z.string().trim().max(120).optional(),
+  }),
+  confirm_register_account: z.object({
+    type: z.literal("confirm_register_account"),
+    request_id: z.string().trim().min(8).max(128).optional(),
+    name: z.string().trim().min(2).max(64),
+    clabe: z.string().trim().min(10).max(18),
+    bank: z.preprocess(
+      (value) => (typeof value === "string" && !value.trim() ? undefined : value),
+      z.string().trim().min(2).max(80).optional(),
+    ),
   }),
   rate_interaction: z.object({
     type: z.literal("rate_interaction"),
@@ -361,8 +382,8 @@ async function createBackend({
         pendingTransfer = {
           requestId,
           contactId: ui.props.contact_id,
-          toAlias: ui.props.to_alias,
-          accountNumber: ui.props.account_number,
+          toAlias: ui.props.registered_name || ui.props.to_alias,
+          accountNumber: ui.props.clabe || ui.props.account_number,
           bank: ui.props.bank,
           amount: ui.props.amount,
           concept: ui.props.concept || "",
@@ -398,12 +419,12 @@ async function createBackend({
       state.pendingTransfer = null;
       throw new SocketEventError("TRANSFER_EXPIRED", "La transferencia pendiente expiró");
     }
-    const toAlias = event.to_alias || pending.toAlias;
+    const toAlias = event.registered_name || event.to_alias || pending.toAlias;
     const amount = event.amount ?? pending.amount;
     if (!toAlias || !Number.isFinite(amount) || amount <= 0) {
       throw new SocketEventError(
         "TRANSFER_FIELDS_REQUIRED",
-        "Completa la persona y el monto antes de confirmar",
+        "Completa el nombre registrado y el monto antes de confirmar",
       );
     }
     const recipientChanged =
@@ -412,6 +433,7 @@ async function createBackend({
     pending.contactId =
       event.contact_id || (recipientChanged ? "" : pending.contactId) || "";
     pending.accountNumber =
+      event.clabe ||
       event.account_number ||
       (recipientChanged ? "" : pending.accountNumber) ||
       "";
@@ -419,6 +441,12 @@ async function createBackend({
       event.bank || (recipientChanged ? "" : pending.bank) || "";
     pending.amount = Math.round(amount * 100) / 100;
     pending.concept = event.concept ?? pending.concept ?? "";
+    if (!pending.accountNumber) {
+      throw new SocketEventError(
+        "CLABE_REQUIRED",
+        "La cuenta registrada debe incluir una CLABE válida",
+      );
+    }
     if (pending.status === "processing") {
       throw new SocketEventError(
         "TRANSFER_IN_PROGRESS",
@@ -494,10 +522,12 @@ async function createBackend({
           pending.transaction = await mcp.callTool("createTransaction", {
             fromUserId: state.user.id,
             toAlias: pending.toAlias,
+            registeredName: pending.toAlias,
             amount: pending.amount,
             concept: pending.concept,
             contactId: pending.contactId || undefined,
             accountNumber: pending.accountNumber || undefined,
+            clabe: pending.accountNumber || undefined,
             requestId: pending.requestId,
           });
           pending.status = "executed";
@@ -541,6 +571,39 @@ async function createBackend({
     }
   }
 
+  async function handleRegisterAccount(ws, state, event) {
+    requireAuthentication(state);
+    safeSend(ws, {
+      type: "assistant_status",
+      status: "thinking",
+      message: "Registrando la cuenta…",
+    });
+    try {
+      const result = await mcp.callTool("register_account", {
+        userId: state.user.id,
+        name: event.name,
+        clabe: event.clabe,
+        bank: event.bank,
+      });
+      const ui = {
+        type: "ui",
+        component: "register_account_success",
+        props: {
+          title: "Cuenta registrada",
+          account: result.account,
+        },
+      };
+      const persistedUI = await persistUI(
+        state,
+        `Registrar cuenta ${event.name}`,
+        ui,
+      );
+      safeSend(ws, persistedUI);
+    } finally {
+      safeSend(ws, { type: "assistant_status", status: "idle" });
+    }
+  }
+
   async function handleRating(ws, state, event) {
     requireAuthentication(state);
     if (!state.interactionIds.has(event.interaction_id)) {
@@ -568,6 +631,8 @@ async function createBackend({
         return handleUserText(ws, state, event.text);
       case "confirm_transfer":
         return handleTransferConfirmation(ws, state, event);
+      case "confirm_register_account":
+        return handleRegisterAccount(ws, state, event);
       case "rate_interaction":
         return handleRating(ws, state, event);
       default:

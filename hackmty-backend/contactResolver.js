@@ -9,24 +9,31 @@ function normalizeContactText(value) {
     .toLocaleLowerCase("es-MX");
 }
 
+function normalizeClabe(value) {
+  return String(value || "").replace(/\s+/g, "").toUpperCase();
+}
+
 function canonicalContact(record) {
-  const fullName =
-    record.fullName ||
-    record.full_name ||
-    record.display_name ||
+  const registeredName =
     record.name ||
     record.alias ||
+    record.nickname ||
+    record.display_name ||
+    record.fullName ||
+    record.full_name ||
     "";
-  const alias = record.alias || record.nickname || fullName.split(/\s+/)[0] || "";
+  const clabe = normalizeClabe(
+    record.clabe || record.accountNumber || record.account_number || "",
+  );
   return {
     id: String(record.id || record.contact_id || record._id || ""),
-    alias,
-    nickname: record.nickname || alias,
-    firstName: record.firstName || record.first_name || fullName.split(/\s+/)[0] || alias,
-    fullName,
-    accountNumber: String(
-      record.accountNumber || record.account_number || record.account_id || "",
-    ),
+    name: registeredName,
+    alias: registeredName,
+    nickname: registeredName,
+    firstName: registeredName.split(/\s+/)[0] || registeredName,
+    fullName: registeredName,
+    clabe,
+    accountNumber: clabe,
     accountId: String(record.accountId || record.account_id || ""),
     bank: record.bank || "Banorte",
     userId: record.userId || record.user_id || record.contact_user_id || null,
@@ -58,9 +65,11 @@ function editDistance(leftValue, rightValue) {
 
 function scoreContact(query, contact) {
   const target = normalizeContactText(query);
-  if (!target) return null;
+  const targetClabe = normalizeClabe(query);
+  if (!target && !targetClabe) return null;
   const fields = [
-    ["accountNumber", contact.accountNumber, 140],
+    ["clabe", contact.clabe, 150],
+    ["name", contact.name, 140],
     ["alias", contact.alias, 130],
     ["nickname", contact.nickname, 125],
     ["fullName", contact.fullName, 120],
@@ -68,6 +77,13 @@ function scoreContact(query, contact) {
   ];
   let best = null;
   for (const [matchedBy, value, exactScore] of fields) {
+    if (matchedBy === "clabe") {
+      const term = normalizeClabe(value);
+      if (term && targetClabe && term === targetClabe) {
+        best = { matchedBy, score: exactScore };
+      }
+      continue;
+    }
     const term = normalizeContactText(value);
     if (!term) continue;
     let score = null;
@@ -117,6 +133,7 @@ function resolveContact(query, records) {
 module.exports = {
   canonicalContact,
   editDistance,
+  normalizeClabe,
   normalizeContactText,
   resolveContact,
   scoreContact,

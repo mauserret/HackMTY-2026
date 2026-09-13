@@ -11,7 +11,8 @@ const ACCOUNT_FIXTURES = Object.freeze({
   u1: Object.freeze([
     Object.freeze({
       account_id: "acc_u1_checking",
-      account_number: "072180000001245678",
+      name: "Cuenta principal",
+      clabe: "072180000001245678",
       bank: "Banorte",
       type: "checking",
       balance: 24500,
@@ -19,7 +20,8 @@ const ACCOUNT_FIXTURES = Object.freeze({
     }),
     Object.freeze({
       account_id: "acc_u1_credit",
-      account_number: "4915660000001840",
+      name: "Tarjeta Banorte",
+      clabe: "4915660000001840",
       bank: "Banorte",
       type: "credit_card",
       balance_owed: 18400,
@@ -30,7 +32,8 @@ const ACCOUNT_FIXTURES = Object.freeze({
   u2: Object.freeze([
     Object.freeze({
       account_id: "acc_u2_checking",
-      account_number: "072180000002083000",
+      name: "Cuenta principal",
+      clabe: "072180000002083000",
       bank: "Banorte",
       type: "checking",
       balance: 8300,
@@ -40,7 +43,8 @@ const ACCOUNT_FIXTURES = Object.freeze({
   u3: Object.freeze([
     Object.freeze({
       account_id: "acc_u3_checking",
-      account_number: "072180000003520000",
+      name: "Cuenta principal",
+      clabe: "072180000003520000",
       bank: "Banorte",
       type: "checking",
       balance: 52000,
@@ -50,7 +54,8 @@ const ACCOUNT_FIXTURES = Object.freeze({
   u4: Object.freeze([
     Object.freeze({
       account_id: "acc_u4_checking",
-      account_number: "072180000004125000",
+      name: "Cuenta principal",
+      clabe: "072180000004125000",
       bank: "Banorte",
       type: "checking",
       balance: 1250,
@@ -81,20 +86,22 @@ function buildDemoData() {
   const contacts = users.flatMap((owner) =>
     users
       .filter((contact) => contact._id !== owner._id)
-      .map((contact) => ({
-        _id: `contact_${owner._id}_${contact._id}`,
-        owner_id: owner._id,
-        contact_user_id: contact._id,
-        alias: contact.username,
-        alias_key: aliasKey(contact.username),
-        nickname: contact.username,
-        first_name: contact.name.split(/\s+/)[0],
-        display_name: contact.name,
-        account_id: contact.accounts.find((account) => account.type === "checking").account_id,
-        account_number: contact.accounts.find((account) => account.type === "checking")
-          .account_number,
-        bank: contact.accounts.find((account) => account.type === "checking").bank,
-      })),
+      .map((contact) => {
+        const checking = contact.accounts.find(
+          (account) => account.type === "checking",
+        );
+        return {
+          _id: `contact_${owner._id}_${contact._id}`,
+          owner_id: owner._id,
+          contact_user_id: contact._id,
+          name: contact.username,
+          name_key: aliasKey(contact.username),
+          clabe: checking.clabe,
+          account_id: checking.account_id,
+          bank: checking.bank,
+          created_at: new Date(),
+        };
+      }),
   );
 
   const creditPlans = [
@@ -130,13 +137,15 @@ function buildDemoData() {
       request_id: `seed_request_${id}`,
       from_user_id: from,
       to_user_id: to,
+      contact_id: `contact_${from}_${to}`,
       to_alias: recipient.username,
       to_alias_key: aliasKey(recipient.username),
+      registered_name: recipient.username,
       from_account: checkingAccount(from).account_id,
       to_account: recipientAccount.account_id,
-      account_number: recipientAccount.account_number,
+      clabe: recipientAccount.clabe,
       bank: recipientAccount.bank,
-      recipient_name: recipient.name,
+      recipient_name: recipient.username,
       amount,
       concept,
       currency: "MXN",
@@ -211,6 +220,7 @@ function getPublicDemoUsers() {
 }
 
 module.exports = {
+  ACCOUNT_FIXTURES,
   DEMO_USERS,
   aliasKey,
   buildDemoData,

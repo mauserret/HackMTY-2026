@@ -28,6 +28,7 @@ import {
 export default function DynamicUI({
   message,
   onConfirmTransfer,
+  onConfirmRegisterAccount,
   onSendMessage,
   onRate,
   savedRating,
@@ -78,6 +79,16 @@ export default function DynamicUI({
           rating={rating}
         />
       );
+    case "register_account_form":
+      return (
+        <RegisterAccountForm
+          data={data}
+          onConfirm={onConfirmRegisterAccount}
+          rating={rating}
+        />
+      );
+    case "register_account_success":
+      return <RegisterAccountSuccess data={data} rating={rating} />;
     case "transfer_success":
       return <TransferSuccess data={data} rating={rating} />;
     case "credit_plan_table":
@@ -431,19 +442,25 @@ function ContactsList({ data, onSendMessage, rating }) {
     <GeneratedCard
       icon="people-outline"
       title="¿A quién le enviamos?"
-      eyebrow={`${contacts.length} CONTACTOS DISPONIBLES`}
+      eyebrow={`${contacts.length} CUENTAS REGISTRADAS`}
     >
       <View style={styles.contactList}>
         {contacts.map((contact, index) => {
-          const alias = contact.alias || contact.name;
-          const displayName =
-            contact.display_name || contact.name || contact.alias;
+          const registeredName =
+            contact.name || contact.alias || contact.display_name;
+          const clabe =
+            contact.clabe ||
+            contact.accountNumber ||
+            contact.account_number ||
+            "";
           return (
             <Pressable
-              key={contact.contact_user_id || contact.account_id || alias}
+              key={contact.contact_id || contact.id || registeredName}
               accessibilityRole="button"
-              accessibilityLabel={`Transferir a ${alias}`}
-              onPress={() => onSendMessage(`Quiero transferirle a ${alias}`)}
+              accessibilityLabel={`Transferir a ${registeredName}`}
+              onPress={() =>
+                onSendMessage(`Quiero transferirle a ${registeredName}`)
+              }
               style={({ pressed }) => [
                 styles.contactRow,
                 index < contacts.length - 1 && styles.rowDivider,
@@ -452,14 +469,13 @@ function ContactsList({ data, onSendMessage, rating }) {
             >
               <View style={styles.avatar}>
                 <Text style={styles.avatarText}>
-                  {displayName?.slice(0, 1).toUpperCase()}
+                  {registeredName?.slice(0, 1).toUpperCase()}
                 </Text>
               </View>
               <View style={styles.detailCopy}>
-                <Text style={styles.contactName}>{displayName}</Text>
+                <Text style={styles.contactName}>{registeredName}</Text>
                 <Text style={styles.detailHint}>
-                  Cuenta ••••{" "}
-                  {(contact.account_id || contact.account || "").slice(-4)}
+                  CLABE •••• {String(clabe).slice(-4)}
                 </Text>
               </View>
               <Ionicons
@@ -519,12 +535,13 @@ function matchContact(recipient, contacts) {
   return (
     contacts.find((contact) =>
       [
+        contact.name,
         contact.alias,
         contact.display_name,
         contact.fullName,
-        contact.display_name?.split(/\s+/)[0],
-        contact.fullName?.split(/\s+/)[0],
+        contact.clabe,
         contact.accountNumber,
+        contact.account_number,
       ]
         .filter(Boolean)
         .some((value) => normalizeComparable(value) === target),
@@ -539,6 +556,7 @@ function TransferForm({ data, onConfirm, rating }) {
   const [recipient, setRecipient] = useState(
     String(
       initial.recipient ??
+        data.registered_name ??
         data.recipient_name ??
         data.to_alias ??
         "",
@@ -555,12 +573,18 @@ function TransferForm({ data, onConfirm, rating }) {
   const selectedContact = matchContact(recipient, contacts);
   const keepsInitialContact =
     normalizeComparable(recipient) ===
-    normalizeComparable(initial.recipient || data.recipient_name);
-  const accountNumber =
+    normalizeComparable(
+      initial.recipient || data.registered_name || data.recipient_name,
+    );
+  const clabe =
+    selectedContact?.clabe ||
     selectedContact?.accountNumber ||
     selectedContact?.account_number ||
     (keepsInitialContact
-      ? initial.accountNumber || data.account_number
+      ? initial.clabe ||
+        initial.accountNumber ||
+        data.clabe ||
+        data.account_number
       : "") ||
     "";
   const bank =
@@ -568,34 +592,50 @@ function TransferForm({ data, onConfirm, rating }) {
     (keepsInitialContact ? initial.bank || data.bank : "") ||
     "";
   const canSubmit =
-    status === "ready" && Boolean(recipient.trim()) && Boolean(amount);
+    status === "ready" &&
+    Boolean(recipient.trim()) &&
+    Boolean(amount) &&
+    Boolean(String(clabe).trim());
 
   const handleConfirm = () => {
     if (status !== "ready") return;
     if (!recipient.trim() || !amount) {
-      setValidationError("Completa la persona y escribe un monto válido.");
+      setValidationError(
+        "Completa el nombre registrado y escribe un monto válido.",
+      );
       return;
     }
     const contact = matchContact(recipient, contacts);
+    const resolvedClabe =
+      contact?.clabe ||
+      contact?.accountNumber ||
+      contact?.account_number ||
+      clabe;
+    if (!String(resolvedClabe || "").trim()) {
+      setValidationError(
+        "No hay una CLABE asociada a ese nombre. Registra la cuenta primero.",
+      );
+      return;
+    }
+    const registeredName = contact?.name || contact?.alias || recipient.trim();
     const sent = onConfirm({
       ...data,
       contact_id: contact?.contact_id || contact?.id || "",
-      to_alias: contact?.alias || recipient.trim(),
-      recipient_name:
-        contact?.fullName || contact?.display_name || recipient.trim(),
-      account_number:
-        contact?.accountNumber || contact?.account_number || "",
-      bank: contact?.bank || "",
+      to_alias: registeredName,
+      registered_name: registeredName,
+      recipient_name: registeredName,
+      account_number: resolvedClabe,
+      clabe: resolvedClabe,
+      bank: contact?.bank || bank || undefined,
       amount,
       concept: concept.trim(),
       initialValues: {
-        recipient:
-          contact?.fullName || contact?.display_name || recipient.trim(),
+        recipient: registeredName,
         amount: String(amount),
         concept: concept.trim(),
-        accountNumber:
-          contact?.accountNumber || contact?.account_number || "",
-        bank: contact?.bank || "",
+        accountNumber: resolvedClabe,
+        clabe: resolvedClabe,
+        bank: contact?.bank || bank || "",
       },
     });
     if (sent !== false) {
@@ -613,13 +653,13 @@ function TransferForm({ data, onConfirm, rating }) {
       <View style={styles.extractionNote}>
         <Ionicons name="sparkles-outline" size={17} color={colors.red} />
         <Text style={styles.extractionText}>
-          Precargamos lo que entendimos. Puedes corregir cualquier campo.
+          Usa el nombre con el que registraste la cuenta y su CLABE.
         </Text>
       </View>
 
       <View style={styles.formField}>
         <View style={styles.formLabelRow}>
-          <Text style={styles.formLabel}>Persona</Text>
+          <Text style={styles.formLabel}>Nombre registrado</Text>
           {initial.recipient ? (
             <Text style={styles.detectedLabel}>DETECTADO</Text>
           ) : null}
@@ -633,46 +673,47 @@ function TransferForm({ data, onConfirm, rating }) {
               setValidationError("");
             }}
             editable={status === "ready"}
-            placeholder="Nombre o alias"
+            placeholder="Ej. Timo"
             placeholderTextColor={colors.muted}
             autoCapitalize="words"
             maxLength={64}
             style={styles.formInput}
-            accessibilityLabel="Persona destinataria"
+            accessibilityLabel="Nombre registrado de la cuenta"
           />
         </View>
         {contacts.length ? (
           <View style={styles.contactSuggestions}>
-            {contacts.map((contact) => (
-              <Pressable
-                key={contact.alias}
-                accessibilityRole="button"
-                accessibilityLabel={`Seleccionar a ${contact.display_name}`}
-                disabled={status !== "ready"}
-                onPress={() => {
-                  setRecipient(
-                    contact.fullName || contact.display_name,
-                  );
-                  setValidationError("");
-                }}
-                style={({ pressed }) => [
-                  styles.contactSuggestion,
-                  matchContact(recipient, [contact]) &&
-                    styles.contactSuggestionSelected,
-                  pressed && styles.rowPressed,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.contactSuggestionText,
+            {contacts.map((contact) => {
+              const label = contact.name || contact.alias || contact.display_name;
+              return (
+                <Pressable
+                  key={contact.contact_id || contact.alias || label}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Seleccionar ${label}`}
+                  disabled={status !== "ready"}
+                  onPress={() => {
+                    setRecipient(label);
+                    setValidationError("");
+                  }}
+                  style={({ pressed }) => [
+                    styles.contactSuggestion,
                     matchContact(recipient, [contact]) &&
-                      styles.contactSuggestionTextSelected,
+                      styles.contactSuggestionSelected,
+                    pressed && styles.rowPressed,
                   ]}
                 >
-                  {(contact.fullName || contact.display_name).split(/\s+/)[0]}
-                </Text>
-              </Pressable>
-            ))}
+                  <Text
+                    style={[
+                      styles.contactSuggestionText,
+                      matchContact(recipient, [contact]) &&
+                        styles.contactSuggestionTextSelected,
+                    ]}
+                  >
+                    {label}
+                  </Text>
+                </Pressable>
+              );
+            })}
           </View>
         ) : null}
       </View>
@@ -682,9 +723,9 @@ function TransferForm({ data, onConfirm, rating }) {
           <Ionicons name="business-outline" size={17} color={colors.slate} />
         </View>
         <View style={styles.detailCopy}>
-          <Text style={styles.canonicalAccountLabel}>CUENTA VALIDADA</Text>
+          <Text style={styles.canonicalAccountLabel}>CLABE</Text>
           <Text style={styles.canonicalAccountValue}>
-            {accountNumber || "Selecciona un contacto guardado"}
+            {clabe || "Selecciona un nombre registrado"}
           </Text>
         </View>
         {bank ? <Text style={styles.bankLabel}>{bank}</Text> : null}
@@ -756,7 +797,7 @@ function TransferForm({ data, onConfirm, rating }) {
           color={colors.success}
         />
         <Text style={styles.securityText}>
-          El dinero no se moverá hasta que confirmes estos datos.
+          Si la CLABE no está registrada, la transferencia fallará.
         </Text>
       </View>
 
@@ -795,9 +836,148 @@ function TransferForm({ data, onConfirm, rating }) {
   );
 }
 
+function RegisterAccountForm({ data, onConfirm, rating }) {
+  const initial = data.initialValues || {};
+  const [status, setStatus] = useState("ready");
+  const [name, setName] = useState(String(initial.name ?? data.name ?? ""));
+  const [clabe, setClabe] = useState(String(initial.clabe ?? data.clabe ?? ""));
+  const [bank, setBank] = useState(
+    String(initial.bank ?? data.bank ?? "Banorte"),
+  );
+  const [validationError, setValidationError] = useState("");
+  const canSubmit =
+    status === "ready" &&
+    name.trim().length >= 2 &&
+    clabe.trim().length >= 10;
+
+  const handleConfirm = () => {
+    if (!canSubmit) {
+      setValidationError("Indica un nombre (mín. 2) y una CLABE válida.");
+      return;
+    }
+    const sent = onConfirm?.({
+      request_id: data.request_id,
+      name: name.trim(),
+      clabe: clabe.trim().replace(/\s+/g, ""),
+      bank: bank.trim() || undefined,
+    });
+    if (sent !== false) {
+      setValidationError("");
+      setStatus("pending");
+    }
+  };
+
+  return (
+    <GeneratedCard
+      icon="card-outline"
+      title={data.title || "Registrar cuenta"}
+      eyebrow="ESQUELETO DE REGISTRO"
+    >
+      <View style={styles.extractionNote}>
+        <Ionicons name="bookmark-outline" size={17} color={colors.red} />
+        <Text style={styles.extractionText}>
+          Guarda un nombre propio y la CLABE. Las transferencias usarán ese
+          nombre.
+        </Text>
+      </View>
+
+      <View style={styles.formField}>
+        <Text style={styles.formLabel}>Nombre registrado</Text>
+        <View style={styles.formInputShell}>
+          <Ionicons name="pricetag-outline" size={18} color={colors.slate} />
+          <TextInput
+            value={name}
+            onChangeText={setName}
+            editable={status === "ready"}
+            placeholder="Ej. Renta, Carlos, Nómina"
+            placeholderTextColor={colors.muted}
+            style={styles.formInput}
+            maxLength={64}
+          />
+        </View>
+      </View>
+
+      <View style={styles.formField}>
+        <Text style={styles.formLabel}>CLABE</Text>
+        <View style={styles.formInputShell}>
+          <Ionicons name="keypad-outline" size={18} color={colors.slate} />
+          <TextInput
+            value={clabe}
+            onChangeText={setClabe}
+            editable={status === "ready"}
+            keyboardType="number-pad"
+            placeholder="18 dígitos"
+            placeholderTextColor={colors.muted}
+            style={styles.formInput}
+            maxLength={18}
+          />
+        </View>
+      </View>
+
+      <View style={styles.formField}>
+        <Text style={styles.formLabel}>Banco (opcional)</Text>
+        <View style={styles.formInputShell}>
+          <Ionicons name="business-outline" size={18} color={colors.slate} />
+          <TextInput
+            value={bank}
+            onChangeText={setBank}
+            editable={status === "ready"}
+            placeholder="Banorte"
+            placeholderTextColor={colors.muted}
+            style={styles.formInput}
+            maxLength={80}
+          />
+        </View>
+      </View>
+
+      {validationError ? (
+        <Text style={styles.formError} accessibilityRole="alert">
+          {validationError}
+        </Text>
+      ) : null}
+
+      <Pressable
+        accessibilityRole="button"
+        disabled={!canSubmit}
+        onPress={handleConfirm}
+        style={({ pressed }) => [
+          styles.primaryButton,
+          !canSubmit && styles.disabledButton,
+          pressed && styles.primaryPressed,
+        ]}
+      >
+        <Text style={styles.primaryButtonText}>
+          {status === "pending" ? "Registrando…" : "Registrar cuenta"}
+        </Text>
+      </Pressable>
+      {rating}
+    </GeneratedCard>
+  );
+}
+
+function RegisterAccountSuccess({ data, rating }) {
+  const account = data.account || data;
+  return (
+    <GeneratedCard
+      icon="checkmark-circle-outline"
+      title={data.title || "Cuenta registrada"}
+      eyebrow="LISTO"
+      accent={colors.success}
+    >
+      <Text style={styles.body}>
+        Guardamos “{account.name || account.alias}” con CLABE ••••{" "}
+        {String(account.clabe || account.accountNumber || "").slice(-4)}.
+      </Text>
+      {rating}
+    </GeneratedCard>
+  );
+}
+
 function TransferSuccess({ data, rating }) {
   const amount = data.amount;
   const recipient =
+    data.registered_name ||
+    data.recipient_name ||
     data.recipient ||
     data.to_alias ||
     data.toAlias ||

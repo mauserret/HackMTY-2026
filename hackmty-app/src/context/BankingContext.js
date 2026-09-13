@@ -263,21 +263,41 @@ export function BankingProvider({ children }) {
 
   const confirmTransfer = useCallback((transfer) => {
     if (!sessionRef.current) return false;
+    const registeredName =
+      transfer.registered_name ||
+      transfer.suggested_contact ||
+      transfer.to_alias ||
+      transfer.recipient ||
+      transfer.alias;
+    const clabe =
+      transfer.clabe ||
+      transfer.account_number ||
+      transfer.accountNumber ||
+      undefined;
     return sendSocketMessage({
       type: "confirm_transfer",
       user_id: sessionRef.current.id,
       request_id: transfer.request_id || transfer.requestId,
-      contact_id: transfer.contact_id || transfer.contactId,
-      to_alias:
-        transfer.suggested_contact ||
-        transfer.to_alias ||
-        transfer.recipient ||
-        transfer.alias,
-      account_number:
-        transfer.account_number || transfer.accountNumber,
-      bank: transfer.bank,
+      contact_id: transfer.contact_id || transfer.contactId || undefined,
+      to_alias: registeredName,
+      registered_name: registeredName,
+      account_number: clabe,
+      clabe,
+      bank: transfer.bank || undefined,
       amount: Number(transfer.amount),
       concept: transfer.concept?.trim() || "",
+    });
+  }, []);
+
+  const confirmRegisterAccount = useCallback((account) => {
+    if (!sessionRef.current) return false;
+    return sendSocketMessage({
+      type: "confirm_register_account",
+      user_id: sessionRef.current.id,
+      request_id: account.request_id || account.requestId,
+      name: account.name,
+      clabe: account.clabe,
+      bank: account.bank || undefined,
     });
   }, []);
 
@@ -304,6 +324,7 @@ export function BankingProvider({ children }) {
       logout,
       sendMessage,
       confirmTransfer,
+      confirmRegisterAccount,
       rateInteraction,
       dismissNotification: () => setNotification(null),
     }),
@@ -320,6 +341,7 @@ export function BankingProvider({ children }) {
       logout,
       sendMessage,
       confirmTransfer,
+      confirmRegisterAccount,
       rateInteraction,
     ]
   );
