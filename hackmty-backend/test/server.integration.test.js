@@ -92,7 +92,7 @@ test("WebSocket completa transferencia confirmada, rating y notificación", asyn
   );
   const health = await healthResponse.json();
   assert.equal(healthResponse.status, 200);
-  assert.equal(health.tool_count, 14);
+  assert.equal(health.tool_count, 19);
   assert.equal(health.storage, "memory");
   assert.equal(health.storage_reason, "MONGODB_URI_MISSING");
   assert.equal(
@@ -101,6 +101,37 @@ test("WebSocket completa transferencia confirmada, rating y notificación", asyn
     ).status,
     404,
   );
+  assert.equal(
+    (
+      await fetch(`http://127.0.0.1:${address.port}/api/admin/overview`)
+    ).status,
+    401,
+  );
+  const invalidLogin = await fetch(
+    `http://127.0.0.1:${address.port}/api/admin/login`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "admin", password: "incorrecta" }),
+    },
+  );
+  assert.equal(invalidLogin.status, 401);
+  const adminLogin = await fetch(
+    `http://127.0.0.1:${address.port}/api/admin/login`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "admin", password: "1" }),
+    },
+  );
+  assert.equal(adminLogin.status, 200);
+  const adminCookie = adminLogin.headers.get("set-cookie").split(";")[0];
+  const adminSession = await fetch(
+    `http://127.0.0.1:${address.port}/api/admin/session`,
+    { headers: { Cookie: adminCookie } },
+  );
+  assert.equal(adminSession.status, 200);
+  assert.equal((await adminSession.json()).admin.username, "admin");
 
   sender = await connectClient(url);
   recipient = await connectClient(url);
@@ -245,4 +276,40 @@ test("WebSocket completa transferencia confirmada, rating y notificación", asyn
       message.type === "ui" && message.component === "balance_card",
   );
   assert.equal(balance.props.user.id, "u1");
+
+  const overviewResponse = await fetch(
+    `http://127.0.0.1:${address.port}/api/admin/overview`,
+    { headers: { Cookie: adminCookie } },
+  );
+  const overview = await overviewResponse.json();
+  assert.equal(overviewResponse.status, 200);
+  assert.equal(overview.totals.interfaces >= 5, true);
+  assert.equal(overview.totals.rated, 1);
+
+  const usersResponse = await fetch(
+    `http://127.0.0.1:${address.port}/api/admin/users?search=Mau&page_size=10`,
+    { headers: { Cookie: adminCookie } },
+  );
+  const users = await usersResponse.json();
+  assert.equal(usersResponse.status, 200);
+  assert.equal(users.total, 1);
+  assert.equal(users.items[0].id, "u1");
+
+  const ratingsResponse = await fetch(
+    `http://127.0.0.1:${address.port}/api/admin/ratings?page_size=10`,
+    { headers: { Cookie: adminCookie } },
+  );
+  const ratings = await ratingsResponse.json();
+  assert.equal(ratingsResponse.status, 200);
+  assert.equal(ratings.total, 1);
+  assert.equal(ratings.items[0].rating, 9);
+
+  const detailResponse = await fetch(
+    `http://127.0.0.1:${address.port}/api/admin/interactions/${form.interaction_id}`,
+    { headers: { Cookie: adminCookie } },
+  );
+  const detail = await detailResponse.json();
+  assert.equal(detailResponse.status, 200);
+  assert.equal(detail.user.id, "u1");
+  assert.equal(detail.response.component, "transfer_form");
 });

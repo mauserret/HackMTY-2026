@@ -17,7 +17,8 @@ async function seed() {
       : `persistente en ${storage.dbName}`;
 
   console.log(
-    `Seed listo: ${data.users.length} usuarios, ${data.contacts.length} contactos, ` +
+    `Seed listo: ${data.users.length} usuarios, ${data.admins.length} administrador, ` +
+      `${data.contacts.length} contactos, ` +
       `${data.transactions.length} transacciones y ${data.creditPlans.length} plan de crédito; ` +
       `storage=${storage.kind}, ${persistence}.`,
   );

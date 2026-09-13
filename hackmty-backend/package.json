@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "node --watch server.js",
     "seed": "node seed.js",
+    "seed:admin": "node seedAdmin.js",
     "start": "node server.js",
     "test": "node --test test/*.test.js",
     "test:mcp": "node --test test/mcp.integration.test.js"

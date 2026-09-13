@@ -19,6 +19,11 @@ const EXPECTED_TOOLS = Object.freeze([
   "add_account",
   "get_financial_summary",
   "get_transaction_detail",
+  "authenticateAdmin",
+  "getAdminOverview",
+  "listAdminUsers",
+  "listAdminInteractions",
+  "getAdminInteraction",
 ]);
 
 class McpGatewayError extends Error {

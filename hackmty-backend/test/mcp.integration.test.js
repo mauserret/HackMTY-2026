@@ -28,11 +28,80 @@ async function memoryGateway(t) {
   return mcp;
 }
 
-test("el subproceso MCP publica las doce tools registradas", async (t) => {
+test("el subproceso MCP publica las diecinueve tools registradas", async (t) => {
   const mcp = await memoryGateway(t);
   const names = (await mcp.listTools()).map((tool) => tool.name).sort();
   assert.deepEqual(names, [...EXPECTED_TOOLS].sort());
   assert.equal(mcp.getHealth().storage, "memory");
+});
+
+test("las tools administrativas auditan usuarios, interfaces y ratings", async (t) => {
+  const mcp = await memoryGateway(t);
+  await assert.rejects(
+    mcp.callTool("authenticateAdmin", {
+      username: "admin",
+      password: "incorrecta",
+    }),
+    (error) => error.code === "ADMIN_INVALID_CREDENTIALS",
+  );
+  const authentication = await mcp.callTool("authenticateAdmin", {
+    username: "ADMIN",
+    password: "1",
+  });
+  assert.equal(authentication.admin.username, "admin");
+
+  const first = await mcp.callTool("saveInteraction", {
+    userId: "u1",
+    prompt: "Muéstrame mi saldo",
+    response: { type: "ui", component: "balance_card", props: {} },
+  });
+  await mcp.callTool("saveInteraction", {
+    userId: "u2",
+    prompt: "Muéstrame mis contactos",
+    response: { type: "ui", component: "contacts_list", props: {} },
+  });
+  await mcp.callTool("saveRating", {
+    interactionId: first.interaction_id,
+    rating: 9,
+  });
+
+  const overview = await mcp.callTool("getAdminOverview", {});
+  assert.deepEqual(overview.totals, {
+    users: 4,
+    interfaces: 2,
+    rated: 1,
+    unrated: 1,
+    average_rating: 9,
+  });
+  assert.equal(
+    overview.rating_distribution.find((item) => item.rating === 9).count,
+    1,
+  );
+
+  const users = await mcp.callTool("listAdminUsers", {
+    search: "Mauricio",
+    page: 1,
+    pageSize: 10,
+  });
+  assert.equal(users.total, 1);
+  assert.equal(users.items[0].interaction_count, 1);
+  assert.equal(users.items[0].average_rating, 9);
+
+  const interactions = await mcp.callTool("listAdminInteractions", {
+    userId: "u1",
+    ratingStatus: "rated",
+    page: 1,
+    pageSize: 10,
+  });
+  assert.equal(interactions.total, 1);
+  assert.equal(interactions.items[0].component, "balance_card");
+
+  const detail = await mcp.callTool("getAdminInteraction", {
+    interactionId: first.interaction_id,
+  });
+  assert.equal(detail.user.id, "u1");
+  assert.equal(detail.rating, 9);
+  assert.equal(detail.response.component, "balance_card");
 });
 
 test("las nuevas tools MCP administran contactos, cuentas y analítica", async (t) => {

@@ -129,6 +129,20 @@ class MemoryStorage {
     });
   }
 
+  async upsertAdmin(admin) {
+    return this.withLock(async () => {
+      const index = this.data.admins.findIndex(
+        (candidate) => candidate.username_key === admin.username_key,
+      );
+      if (index >= 0) {
+        this.data.admins[index] = structuredClone(admin);
+      } else {
+        this.data.admins.push(structuredClone(admin));
+      }
+      return structuredClone(admin);
+    });
+  }
+
   async close() {}
 }
 
@@ -180,6 +194,15 @@ class MongoStorage {
 
   async ensureIndexes() {
     await Promise.all([
+      createOrReplaceIndex(
+        this.db.collection("admins"),
+        { username_key: 1 },
+        {
+          name: "username_key_1",
+          unique: true,
+          partialFilterExpression: { username_key: { $type: "string" } },
+        },
+      ),
       createOrReplaceIndex(
         this.db.collection("users"),
         { username_key: 1 },
@@ -315,18 +338,35 @@ class MongoStorage {
         { user_id: 1, created_at: -1 },
         { name: "user_id_1_created_at_-1" },
       ),
+      createOrReplaceIndex(
+        this.db.collection("interactions"),
+        { created_at: -1 },
+        { name: "created_at_-1" },
+      ),
+      createOrReplaceIndex(
+        this.db.collection("interactions"),
+        { rating: 1, created_at: -1 },
+        { name: "rating_1_created_at_-1" },
+      ),
+      createOrReplaceIndex(
+        this.db.collection("interactions"),
+        { "response.component": 1, created_at: -1 },
+        { name: "response.component_1_created_at_-1" },
+      ),
     ]);
   }
 
   async replaceWithDemoData() {
     const data = buildDemoData();
     await Promise.all([
+      this.db.collection("admins").deleteMany({}),
       this.db.collection("users").deleteMany({}),
       this.db.collection("contacts").deleteMany({}),
       this.db.collection("transactions").deleteMany({}),
       this.db.collection("credit_plans").deleteMany({}),
       this.db.collection("interactions").deleteMany({}),
     ]);
+    await this.db.collection("admins").insertMany(data.admins);
     await this.db.collection("users").insertMany(data.users);
     await this.db.collection("contacts").insertMany(data.contacts);
     await this.db.collection("credit_plans").insertMany(data.creditPlans);
@@ -335,6 +375,19 @@ class MongoStorage {
     }
     await this.ensureIndexes();
     return data;
+  }
+
+  async upsertAdmin(admin) {
+    const { _id, ...mutableFields } = admin;
+    await this.db.collection("admins").updateOne(
+      { username_key: admin.username_key },
+      {
+        $set: mutableFields,
+        $setOnInsert: { _id },
+      },
+      { upsert: true },
+    );
+    return admin;
   }
 
   async close() {
