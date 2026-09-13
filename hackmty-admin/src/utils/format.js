@@ -26,3 +26,23 @@ export function averageLabel(value) {
       })}/10`
     : "—";
 }
+
+export function formatMoney(value, currency = "MXN") {
+  const number = Number(value);
+  const amount = Number.isFinite(number) ? number : 0;
+  try {
+    return new Intl.NumberFormat("es-MX", {
+      style: "currency",
+      currency,
+      minimumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return `$${amount.toFixed(2)}`;
+  }
+}
+
+export function maskClabe(value) {
+  const digits = String(value || "").replace(/\s+/g, "");
+  if (!digits) return "Sin CLABE";
+  return `•••• ${digits.slice(-4)}`;
+}

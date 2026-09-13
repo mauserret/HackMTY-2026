@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { adminApi, errorMessage } from "../api/client";
+import GeneratedUiPreview from "./GeneratedUiPreview";
 import {
   componentLabel,
   formatDate,
@@ -92,6 +93,17 @@ export default function InteractionDrawer({ interactionId, onClose }) {
             <section className="detail-section">
               <h3>Prompt del usuario</h3>
               <blockquote>{detail.prompt}</blockquote>
+            </section>
+
+            <section className="detail-section">
+              <h3>UI generada</h3>
+              <p className="muted">
+                Vista previa de solo lectura con los datos persistidos.
+              </p>
+              <GeneratedUiPreview
+                component={detail.component}
+                response={detail.response}
+              />
             </section>
 
             <section className="detail-section">
