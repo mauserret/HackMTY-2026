@@ -7,6 +7,7 @@ const http = require("node:http");
 const express = require("express");
 const { WebSocket, WebSocketServer } = require("ws");
 const { z } = require("zod");
+const { createAdminRouter } = require("./adminRoutes");
 const { getPublicDemoUsers } = require("./demoData");
 const { clearMemory, contactsUI, normalizeText, processMessage } = require("./llm");
 const { McpGateway, McpGatewayError } = require("./mcpClient");
@@ -215,6 +216,8 @@ async function createBackend({
       });
     }
   });
+
+  app.use("/api/admin", createAdminRouter({ mcp }));
 
   app.use((error, _request, response, _next) => {
     const status = error?.status === 400 || error?.type === "entity.parse.failed" ? 400 : 500;

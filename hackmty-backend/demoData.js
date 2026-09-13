@@ -1,5 +1,7 @@
 "use strict";
 
+const { createAdminDocument } = require("./adminCredentials");
+
 const DEMO_USERS = Object.freeze([
   Object.freeze({ id: "u1", name: "Mauricio Hernández", username: "Mau" }),
   Object.freeze({ id: "u2", name: "Timoteo Aguilar", username: "Timo" }),
@@ -208,6 +210,7 @@ function buildDemoData() {
 
   return {
     users,
+    admins: [createAdminDocument()],
     contacts,
     creditPlans,
     transactions,

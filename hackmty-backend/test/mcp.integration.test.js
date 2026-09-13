@@ -28,11 +28,80 @@ async function memoryGateway(t) {
   return mcp;
 }
 
-test("el subproceso MCP publica las doce tools registradas", async (t) => {
+test("el subproceso MCP publica las diecinueve tools registradas", async (t) => {
   const mcp = await memoryGateway(t);
   const names = (await mcp.listTools()).map((tool) => tool.name).sort();
   assert.deepEqual(names, [...EXPECTED_TOOLS].sort());
   assert.equal(mcp.getHealth().storage, "memory");
+});
+
+test("las tools administrativas auditan usuarios, interfaces y ratings", async (t) => {
+  const mcp = await memoryGateway(t);
+  await assert.rejects(
+    mcp.callTool("authenticateAdmin", {
+      username: "admin",
+      password: "incorrecta",
+    }),
+    (error) => error.code === "ADMIN_INVALID_CREDENTIALS",
+  );
+  const authentication = await mcp.callTool("authenticateAdmin", {
+    username: "ADMIN",
+    password: "1",
+  });
+  assert.equal(authentication.admin.username, "admin");
+
+  const first = await mcp.callTool("saveInteraction", {
+    userId: "u1",
+    prompt: "Muéstrame mi saldo",
+    response: { type: "ui", component: "balance_card", props: {} },
+  });
+  await mcp.callTool("saveInteraction", {
+    userId: "u2",
+    prompt: "Muéstrame mis contactos",
+    response: { type: "ui", component: "contacts_list", props: {} },
+  });
+  await mcp.callTool("saveRating", {
+    interactionId: first.interaction_id,
+    rating: 9,
+  });
+
+  const overview = await mcp.callTool("getAdminOverview", {});
+  assert.deepEqual(overview.totals, {
+    users: 4,
+    interfaces: 2,
+    rated: 1,
+    unrated: 1,
+    average_rating: 9,
+  });
+  assert.equal(
+    overview.rating_distribution.find((item) => item.rating === 9).count,
+    1,
+  );
+
+  const users = await mcp.callTool("listAdminUsers", {
+    search: "Mauricio",
+    page: 1,
+    pageSize: 10,
+  });
+  assert.equal(users.total, 1);
+  assert.equal(users.items[0].interaction_count, 1);
+  assert.equal(users.items[0].average_rating, 9);
+
+  const interactions = await mcp.callTool("listAdminInteractions", {
+    userId: "u1",
+    ratingStatus: "rated",
+    page: 1,
+    pageSize: 10,
+  });
+  assert.equal(interactions.total, 1);
+  assert.equal(interactions.items[0].component, "balance_card");
+
+  const detail = await mcp.callTool("getAdminInteraction", {
+    interactionId: first.interaction_id,
+  });
+  assert.equal(detail.user.id, "u1");
+  assert.equal(detail.rating, 9);
+  assert.equal(detail.response.component, "balance_card");
 });
 
 test("las nuevas tools MCP administran contactos, cuentas y analítica", async (t) => {
@@ -50,6 +119,22 @@ test("las nuevas tools MCP administran contactos, cuentas y analítica", async (
   });
   assert.equal(registered.account.name, "Carlos");
   assert.equal(registered.account.clabe, "012180001234567890");
+
+  // Registrar una CLABE que no pertenece a ningún usuario real debe
+  // permitirse, pero la transferencia debe fallar al confirmar.
+  await assert.rejects(
+    () =>
+      mcp.callTool("createTransaction", {
+        fromUserId: "u2",
+        registeredName: "Carlos",
+        toAlias: "Carlos",
+        amount: 10,
+        concept: "CLABE inexistente",
+      }),
+    (error) =>
+      error.code === "CLABE_NOT_FOUND" &&
+      /ninguna cuenta del sistema/i.test(error.message),
+  );
 
   const updatedContact = await mcp.callTool("update_contact", {
     userId: "u2",
@@ -201,6 +286,25 @@ test("el fallback consulta MCP y nunca transfiere en el primer turno", async (t)
   assert.equal(ui.props.registered_name, "Timo");
   assert.equal(ui.props.amount, 1500);
   assert.deepEqual(after.accounts, before.accounts);
+});
+
+test("si pide transferir todo el dinero, el monto es el saldo disponible", async (t) => {
+  const mcp = await memoryGateway(t);
+  t.after(() => clearMemory("u1"));
+  const balance = await mcp.callTool("getBalance", { userId: "u1" });
+  const checking = balance.accounts.find((account) => account.type === "checking");
+  const ui = await localFallback(
+    "u1",
+    "Transfiere todo mi dinero a Timo por liquidación",
+    mcp,
+  );
+
+  assert.equal(ui.component, "transfer_form");
+  assert.equal(ui.props.to_alias, "Timo");
+  assert.equal(ui.props.amount, checking.balance);
+  assert.equal(ui.props.initialValues.amount, String(checking.balance));
+  assert.equal(ui.props.concept, "Liquidación");
+  assert.equal(ui.props.missing_fields.includes("amount"), false);
 });
 
 test("precarga persona, monto y concepto aunque la persona no sea un contacto", async (t) => {

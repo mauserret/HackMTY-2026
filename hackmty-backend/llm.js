@@ -120,6 +120,9 @@ Reglas de seguridad:
 - En transferencias extrae nombre registrado, monto y concepto. Produce
   transfer_form incluso si falta algún dato: usa initialValues con cadenas
   vacías para que el usuario pueda completar o corregir todos los campos.
+- Si el usuario pide transferir "todo", "todo mi dinero", "todo el saldo" o
+  equivalente, consulta getBalance y usa el saldo disponible de la cuenta de
+  gasto como monto en transfer_form (no ejecutes la transferencia).
 - Para solicitudes fuera de alcance, usa quick_actions.
 `.trim();
 
@@ -385,6 +388,36 @@ function positiveHintedAmount(value) {
     : null;
 }
 
+function wantsFullBalanceTransfer(text) {
+  const normalized = normalizeText(text);
+  return (
+    /\b(?:todo|toda)\s+(?:mi|el|la)?\s*(?:dinero|saldo|balance|lana|efectivo|fondos?)\b/.test(
+      normalized,
+    ) ||
+    /\b(?:el|mi)\s+saldo\s+completo\b/.test(normalized) ||
+    /\bsaldo\s+completo\b/.test(normalized) ||
+    /\btodo\s+lo\s+que\s+(?:tengo|haya)\b/.test(normalized) ||
+    /\bvacia(?:r)?\s+(?:la\s+|mi\s+)?cuenta\b/.test(normalized) ||
+    /\b(?:transf\w*|envia\w*|manda\w*|deposita\w*|pasa(?:le|r)?)\s+todo\b/.test(
+      normalized,
+    ) ||
+    /\btodo\s+(?:a|para)\s+[\p{L}]/u.test(normalized)
+  );
+}
+
+function spendingAccountBalance(accounts = []) {
+  const account =
+    accounts.find((candidate) => candidate.type === "checking") ||
+    accounts.find((candidate) => Number.isFinite(Number(candidate.balance))) ||
+    accounts[0] ||
+    null;
+  const balance = Number(account?.balance);
+  if (!Number.isFinite(balance) || balance <= 0 || balance > 1_000_000) {
+    return null;
+  }
+  return Math.round(balance * 100) / 100;
+}
+
 function extractTransferEntities(text, contacts, hints = {}, previous = {}) {
   const initialValues = hints.initialValues || {};
   const hintedRecipient =
@@ -422,8 +455,9 @@ function extractTransferEntities(text, contacts, hints = {}, previous = {}) {
     previous.recipientName ||
     previous.toAlias ||
     "";
+  const explicitAmount = parseAmount(text);
   const amount =
-    parseAmount(text) ??
+    explicitAmount ??
     positiveHintedAmount(initialValues.amount ?? hints.amount) ??
     previous.amount ??
     null;
@@ -446,6 +480,7 @@ function extractTransferEntities(text, contacts, hints = {}, previous = {}) {
     clabe: canonical?.clabe || "",
     bank: canonical?.bank || "",
     amount,
+    useFullBalance: !explicitAmount && wantsFullBalanceTransfer(text),
     concept,
   };
 }
@@ -770,6 +805,14 @@ async function transferUI(userId, text, mcp, hints = {}) {
     hints,
     previous,
   );
+
+  if (entities.useFullBalance) {
+    const balance = await mcp.callTool("getBalance", { userId });
+    const fullAmount = spendingAccountBalance(balance.accounts);
+    if (fullAmount !== null) {
+      entities.amount = fullAmount;
+    }
+  }
 
   memory.transferDraft = {
     contactId: entities.contactId,
@@ -1131,6 +1174,8 @@ module.exports = {
   parseModelJson,
   processMessage,
   requestedChartType,
+  spendingAccountBalance,
   transactionDetailUI,
   transactionsSummaryUI,
+  wantsFullBalanceTransfer,
 };

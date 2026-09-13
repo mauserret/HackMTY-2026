@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
+const { createAdminDocument, verifyPassword } = require("../adminCredentials");
 const {
   classifyMongoError,
   createStorage,
@@ -42,4 +43,15 @@ test("mantiene fallo estricto cuando Mongo es obligatorio", async () => {
       logger: () => {},
     }),
   );
+});
+
+test("actualiza el administrador sin duplicarlo", async () => {
+  const storage = await createStorage({ uri: "", logger: () => {} });
+  assert.equal(storage.data.admins.length, 1);
+  await storage.upsertAdmin(
+    createAdminDocument({ username: "admin", password: "nueva" }),
+  );
+  assert.equal(storage.data.admins.length, 1);
+  assert.equal(verifyPassword("nueva", storage.data.admins[0]), true);
+  await storage.close();
 });

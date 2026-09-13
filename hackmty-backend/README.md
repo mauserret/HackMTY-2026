@@ -70,7 +70,7 @@ cliente
 - `llm.js` solo entrega a Gemini tools de lectura; una transferencia se ejecuta
   exclusivamente desde la confirmación del servidor.
 
-El catálogo MCP publica 14 tools. Las seis originales se conservan para
+El catálogo MCP publica 19 tools. Las seis originales se conservan para
 compatibilidad:
 
 - `getBalance({ userId })`
@@ -90,6 +90,10 @@ Las nuevas operaciones son:
 - `add_account({ userId, type, name?, clabe?, accountNumber?, bank?, ... })`
 - `get_financial_summary({ userId, startDate?, endDate?, groupBy? })`
 - `get_transaction_detail({ userId, transactionId })`
+
+Cinco tools internas respaldan el portal administrativo y no se entregan al
+LLM: `authenticateAdmin`, `getAdminOverview`, `listAdminUsers`,
+`listAdminInteractions` y `getAdminInteraction`.
 
 `get_contacts` y `register_account` usan el contrato canónico (`name`, `clabe`,
 `bank`). Las transferencias resuelven por el **nombre registrado** y exigen que
@@ -157,12 +161,33 @@ intérprete local consulta MCP y cubre:
 
 Gemini no participa en la conversión de voz.
 
+## Portal administrativo
+
+Antes del primer acceso crea o actualiza la cuenta configurada, sin modificar
+las demás colecciones:
+
+```bash
+npm run seed:admin
+```
+
+Los valores predeterminados requeridos para la demo son `admin` / `1`. La
+contraseña se almacena con `scrypt`; el API emite una cookie firmada `HttpOnly`
+y limita intentos fallidos. En producción configura `ADMIN_SESSION_SECRET`,
+`ADMIN_COOKIE_SECURE=true` y los orígenes adicionales en
+`ADMIN_ALLOWED_ORIGINS`.
+
+La API protegida se monta en `/api/admin` y expone sesión, resumen, usuarios,
+interfaces, detalle A2UI y análisis de calificaciones. La aplicación
+independiente `hackmty-admin` consume estas rutas; no consulta MongoDB desde el
+navegador.
+
 ## Scripts
 
 ```bash
 npm start
 npm run dev
 npm run seed
+npm run seed:admin
 npm test
 npm run test:mcp
 ```

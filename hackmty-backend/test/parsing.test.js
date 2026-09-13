@@ -10,6 +10,7 @@ const {
   parseAmount,
   parseLocalizedNumber,
   parseModelJson,
+  wantsFullBalanceTransfer,
 } = require("../llm");
 const { parseEvent } = require("../server");
 
@@ -30,6 +31,16 @@ test("extrae cantidades numéricas y coloquiales", () => {
   assert.equal(parseAmount("transfiere mil quinientos pesos a Braulio"), 1500);
   assert.equal(parseAmount("mi usuario es u1"), null);
   assert.equal(parseAmount("transfiere -$500"), null);
+});
+
+test("detecta la intención de transferir todo el saldo", () => {
+  assert.equal(wantsFullBalanceTransfer("Transfiere todo mi dinero a Timo"), true);
+  assert.equal(wantsFullBalanceTransfer("Mándale todo el saldo a Mau"), true);
+  assert.equal(wantsFullBalanceTransfer("Quiero enviar el saldo completo a Brau"), true);
+  assert.equal(wantsFullBalanceTransfer("Transfiere todo a Esteban"), true);
+  assert.equal(wantsFullBalanceTransfer("Vaciar mi cuenta enviando a Timo"), true);
+  assert.equal(wantsFullBalanceTransfer("Quiero hacer una transferencia"), false);
+  assert.equal(wantsFullBalanceTransfer("Transfiere $500 a Timo"), false);
 });
 
 test("resuelve nombres y aliases a un contacto canónico", () => {

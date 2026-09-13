@@ -3,6 +3,11 @@
 const { randomUUID } = require("node:crypto");
 const { ObjectId } = require("mongodb");
 const { z } = require("zod");
+const {
+  createAdminDocument,
+  normalizeAdminUsername,
+  verifyPassword,
+} = require("./adminCredentials");
 const { aliasKey } = require("./demoData");
 const { classifyMongoError, getStorage } = require("./db");
 const {
@@ -15,6 +20,11 @@ const MAX_TRANSACTION_AMOUNT = 1_000_000;
 const MAX_INTERACTION_BYTES = 64 * 1024;
 const CLABE_MIN_LENGTH = 10;
 const CLABE_MAX_LENGTH = 18;
+const MAX_ADMIN_PAGE_SIZE = 100;
+const DUMMY_ADMIN = createAdminDocument({
+  username: "timing-check",
+  password: randomUUID(),
+});
 
 class ToolError extends Error {
   constructor(code, message, recoverable = true) {
@@ -98,6 +108,23 @@ const interactionIdSchema = z
   .min(8)
   .max(128)
   .regex(/^(?:[a-fA-F0-9]{24}|i_[A-Za-z0-9-]+)$/, "interactionId inválido");
+const adminUsernameSchema = z.string().trim().min(1).max(64);
+const adminPasswordSchema = z.string().min(1).max(128);
+const adminSearchSchema = z.string().trim().max(120);
+const adminUserIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .regex(/^(?:u[1-9]\d{0,8}|[a-fA-F0-9]{24})$/, "userId inválido");
+const adminComponentSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(80)
+  .regex(/^[a-z][a-z0-9_]*$/, "component inválido");
+const adminPageSchema = z.number().int().min(1).max(1_000_000);
+const adminPageSizeSchema = z.number().int().min(1).max(MAX_ADMIN_PAGE_SIZE);
 
 const interactionResponseSchema = z
   .union([z.string().max(MAX_INTERACTION_BYTES), z.record(z.unknown()), z.array(z.unknown())])
@@ -195,6 +222,28 @@ const inputSchemas = Object.freeze({
     interactionId: interactionIdSchema,
     rating: z.number().int().min(1).max(10),
   },
+  authenticateAdmin: {
+    username: adminUsernameSchema,
+    password: adminPasswordSchema,
+  },
+  getAdminOverview: {},
+  listAdminUsers: {
+    search: adminSearchSchema.optional(),
+    page: adminPageSchema.optional(),
+    pageSize: adminPageSizeSchema.optional(),
+  },
+  listAdminInteractions: {
+    userId: adminUserIdSchema.optional(),
+    search: adminSearchSchema.optional(),
+    component: adminComponentSchema.optional(),
+    rating: z.number().int().min(1).max(10).optional(),
+    ratingStatus: z.enum(["all", "rated", "unrated"]).optional(),
+    page: adminPageSchema.optional(),
+    pageSize: adminPageSizeSchema.optional(),
+  },
+  getAdminInteraction: {
+    interactionId: interactionIdSchema,
+  },
 });
 
 const toolDefinitions = Object.freeze([
@@ -286,6 +335,36 @@ const toolDefinitions = Object.freeze([
     name: "get_transaction_detail",
     description: "Obtiene los metadatos completos de una transacción del usuario.",
     inputSchema: inputSchemas.get_transaction_detail,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+  },
+  {
+    name: "authenticateAdmin",
+    description: "Valida una cuenta administrativa activa.",
+    inputSchema: inputSchemas.authenticateAdmin,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+  },
+  {
+    name: "getAdminOverview",
+    description: "Resume usuarios, interfaces y distribución de calificaciones.",
+    inputSchema: inputSchemas.getAdminOverview,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+  },
+  {
+    name: "listAdminUsers",
+    description: "Lista usuarios con métricas de actividad generativa.",
+    inputSchema: inputSchemas.listAdminUsers,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+  },
+  {
+    name: "listAdminInteractions",
+    description: "Lista interfaces generadas con filtros de auditoría.",
+    inputSchema: inputSchemas.listAdminInteractions,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+  },
+  {
+    name: "getAdminInteraction",
+    description: "Obtiene una interfaz A2UI completa y su calificación.",
+    inputSchema: inputSchemas.getAdminInteraction,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
   },
 ]);
@@ -1288,6 +1367,26 @@ function transactionResult(transaction, idempotentReplay = false) {
   };
 }
 
+async function requireRealClabeAccount(storage, clabe, options = {}) {
+  const normalized = normalizeClabe(clabe);
+  if (!normalized) {
+    throw new ToolError(
+      "CLABE_NOT_FOUND",
+      "La cuenta registrada no tiene una CLABE asociada",
+      false,
+    );
+  }
+  const linked = await findAccountOwner(storage, normalized, options);
+  if (!linked) {
+    throw new ToolError(
+      "CLABE_NOT_FOUND",
+      "La CLABE no pertenece a ninguna cuenta del sistema con la que se pueda iniciar sesión",
+      false,
+    );
+  }
+  return linked;
+}
+
 async function createMemoryTransaction(storage, args) {
   return storage.withLock(async () => {
     const resolution = resolveStoredContact(
@@ -1306,27 +1405,27 @@ async function createMemoryTransaction(storage, args) {
       return transactionResult(existing, true);
     }
 
+    const linkedAccount = await requireRealClabeAccount(storage, args.clabe);
+    contact.contact_user_id = linkedAccount.user._id;
+    contact.account_id = linkedAccount.account.account_id;
+    contact.bank = linkedAccount.account.bank || contact.bank || "Banorte";
+
     const sender = storage.data.users.find((user) => user._id === args.fromUserId);
-    const recipient = contact.contact_user_id
-      ? storage.data.users.find(
-          (user) => user._id === contact.contact_user_id,
-        )
-      : null;
-    if (!sender || (contact.contact_user_id && !recipient)) {
+    const recipient = linkedAccount.user;
+    if (!sender || !recipient) {
       throw new ToolError(
         "USER_NOT_FOUND",
         "No se encontró una cuenta participante",
       );
     }
     const senderAccount = selectSpendingAccount(sender.accounts);
-    const recipientAccount = recipient
-      ? recipient.accounts.find(
-          (account) =>
-            account.account_id === contact.account_id ||
-            accountClabe(account) === args.clabe,
-        ) || selectSpendingAccount(recipient.accounts)
-      : null;
-    if (!senderAccount || (recipient && !recipientAccount)) {
+    const recipientAccount =
+      recipient.accounts.find(
+        (account) =>
+          account.account_id === linkedAccount.account.account_id ||
+          accountClabe(account) === args.clabe,
+      ) || linkedAccount.account;
+    if (!senderAccount || !recipientAccount) {
       throw new ToolError("ACCOUNT_NOT_FOUND", "No se encontró una cuenta participante");
     }
     if (normalizeMoney(senderAccount.balance) < args.amount) {
@@ -1334,16 +1433,14 @@ async function createMemoryTransaction(storage, args) {
     }
 
     senderAccount.balance = normalizeMoney(senderAccount.balance - args.amount);
-    if (recipientAccount) {
-      recipientAccount.balance = normalizeMoney(
-        recipientAccount.balance + args.amount,
-      );
-    }
+    recipientAccount.balance = normalizeMoney(
+      recipientAccount.balance + args.amount,
+    );
     const transaction = {
       _id: `tx_${randomUUID()}`,
       request_id: args.requestId,
       from_user_id: args.fromUserId,
-      to_user_id: recipient?._id || null,
+      to_user_id: recipient._id,
       contact_id: args.contactId,
       to_alias: args.registeredName || args.toAlias,
       to_alias_key: args.alias_key,
@@ -1351,9 +1448,9 @@ async function createMemoryTransaction(storage, args) {
       recipient_name: args.registeredName || args.toAlias,
       account_number: args.clabe,
       clabe: args.clabe,
-      bank: args.bank,
+      bank: args.bank || linkedAccount.account.bank || "Banorte",
       from_account: senderAccount.account_id,
-      to_account: recipientAccount?.account_id || contact.account_id,
+      to_account: recipientAccount.account_id,
       amount: args.amount,
       concept: args.concept,
       currency: "MXN",
@@ -1384,22 +1481,45 @@ async function loadMongoTransferContext(storage, args, session) {
   }
 
   const contact = resolution.record;
+  const linkedAccount = await requireRealClabeAccount(
+    storage,
+    args.clabe,
+    options,
+  );
+  contact.contact_user_id = linkedAccount.user._id;
+  contact.account_id = linkedAccount.account.account_id;
+  contact.bank = linkedAccount.account.bank || contact.bank || "Banorte";
+  args.bank = args.bank || linkedAccount.account.bank || "Banorte";
+
+  // Persiste el vínculo real si la cuenta se registró con CLABE huérfana.
+  if (storage.kind !== "memory") {
+    await storage.db.collection("contacts").updateOne(
+      { owner_id: args.fromUserId, _id: contact._id },
+      {
+        $set: {
+          contact_user_id: linkedAccount.user._id,
+          account_id: linkedAccount.account.account_id,
+          bank: contact.bank,
+          clabe: args.clabe,
+        },
+      },
+      options,
+    );
+  }
+
   const sender = await findUser(storage, args.fromUserId, options);
-  const recipient = contact.contact_user_id
-    ? await findUser(storage, contact.contact_user_id, options)
-    : null;
-  if (!sender || (contact.contact_user_id && !recipient)) {
+  const recipient = linkedAccount.user;
+  if (!sender || !recipient) {
     throw new ToolError("USER_NOT_FOUND", "No se encontró una cuenta participante");
   }
   const senderAccount = selectSpendingAccount(sender.accounts);
-  const recipientAccount = recipient
-    ? recipient.accounts.find(
-        (account) =>
-          account.account_id === contact.account_id ||
-          accountClabe(account) === args.clabe,
-      ) || selectSpendingAccount(recipient.accounts)
-    : null;
-  if (!senderAccount || (recipient && !recipientAccount)) {
+  const recipientAccount =
+    recipient.accounts.find(
+      (account) =>
+        account.account_id === linkedAccount.account.account_id ||
+        accountClabe(account) === args.clabe,
+    ) || linkedAccount.account;
+  if (!senderAccount || !recipientAccount) {
     throw new ToolError("ACCOUNT_NOT_FOUND", "No se encontró una cuenta participante");
   }
   return { contact, recipient, recipientAccount, senderAccount };
@@ -1410,7 +1530,7 @@ function makeTransactionDocument(args, context) {
   return {
     request_id: args.requestId,
     from_user_id: args.fromUserId,
-    to_user_id: context.recipient?._id || null,
+    to_user_id: context.recipient._id,
     contact_id: args.contactId,
     to_alias: registeredName,
     to_alias_key: args.alias_key,
@@ -1418,10 +1538,9 @@ function makeTransactionDocument(args, context) {
     recipient_name: registeredName,
     account_number: args.clabe,
     clabe: args.clabe,
-    bank: args.bank,
+    bank: args.bank || context.contact.bank || "Banorte",
     from_account: context.senderAccount.account_id,
-    to_account:
-      context.recipientAccount?.account_id || context.contact.account_id,
+    to_account: context.recipientAccount.account_id,
     amount: args.amount,
     concept: args.concept,
     currency: "MXN",
@@ -1456,21 +1575,19 @@ async function applyMongoTransfer(storage, args, session) {
     throw new ToolError("INSUFFICIENT_FUNDS", "Fondos insuficientes");
   }
 
-  if (context.recipient) {
-    const credit = await storage.db.collection("users").updateOne(
-      {
-        _id: context.recipient._id,
-        "accounts.account_id": context.recipientAccount.account_id,
-      },
-      { $inc: { "accounts.$.balance": args.amount } },
-      options,
+  const credit = await storage.db.collection("users").updateOne(
+    {
+      _id: context.recipient._id,
+      "accounts.account_id": context.recipientAccount.account_id,
+    },
+    { $inc: { "accounts.$.balance": args.amount } },
+    options,
+  );
+  if (credit.modifiedCount !== 1) {
+    throw new ToolError(
+      "ACCOUNT_NOT_FOUND",
+      "No se pudo abonar a la cuenta destino",
     );
-    if (credit.modifiedCount !== 1) {
-      throw new ToolError(
-        "ACCOUNT_NOT_FOUND",
-        "No se pudo abonar a la cuenta destino",
-      );
-    }
   }
 
   const document = makeTransactionDocument(args, context);
@@ -1631,6 +1748,515 @@ async function createTransaction(input) {
   }
 }
 
+function escapedSearchExpression(value) {
+  return new RegExp(
+    String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    "i",
+  );
+}
+
+function interactionComponent(interaction) {
+  const component = interaction?.response?.component;
+  return typeof component === "string" && component ? component : "unknown";
+}
+
+function roundedAverage(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number * 100) / 100 : null;
+}
+
+function validRating(value) {
+  return Number.isInteger(value) && value >= 1 && value <= 10;
+}
+
+function pagingResult(items, total, page, pageSize) {
+  return {
+    items,
+    page,
+    page_size: pageSize,
+    total,
+    total_pages: Math.max(1, Math.ceil(total / pageSize)),
+  };
+}
+
+function publicAdminUser(user, activity = {}) {
+  return {
+    id: serializeId(user._id),
+    name: user.name || user.username || serializeId(user._id),
+    username: user.username || "",
+    email: user.email || "",
+    account_count: Array.isArray(user.accounts) ? user.accounts.length : 0,
+    interaction_count: Number(activity.interaction_count || 0),
+    rated_count: Number(activity.rated_count || 0),
+    average_rating: roundedAverage(activity.average_rating),
+    last_activity: activity.last_activity
+      ? serializeDate(activity.last_activity)
+      : null,
+  };
+}
+
+function publicAdminInteraction(interaction, user) {
+  return {
+    interaction_id: serializeId(interaction._id),
+    user: user
+      ? {
+          id: serializeId(user._id),
+          name: user.name || user.username || serializeId(user._id),
+          username: user.username || "",
+        }
+      : {
+          id: serializeId(interaction.user_id),
+          name: "Usuario no disponible",
+          username: "",
+        },
+    prompt: interaction.prompt || "",
+    component: interactionComponent(interaction),
+    rating: validRating(interaction.rating) ? interaction.rating : null,
+    created_at: serializeDate(interaction.created_at),
+    rated_at: interaction.rated_at
+      ? serializeDate(interaction.rated_at)
+      : null,
+  };
+}
+
+function mongoRatingIsValid() {
+  return {
+    $and: [
+      {
+        $in: [
+          { $type: "$rating" },
+          ["int", "long", "double", "decimal"],
+        ],
+      },
+      { $gte: ["$rating", 1] },
+      { $lte: ["$rating", 10] },
+    ],
+  };
+}
+
+function componentRowsFromMemory(interactions) {
+  const counts = new Map();
+  for (const interaction of interactions) {
+    const component = interactionComponent(interaction);
+    const current = counts.get(component) || {
+      component,
+      count: 0,
+      rated_count: 0,
+    };
+    current.count += 1;
+    if (validRating(interaction.rating)) current.rated_count += 1;
+    counts.set(component, current);
+  }
+  return [...counts.values()].sort((left, right) => right.count - left.count);
+}
+
+function ratingRowsFromMemory(interactions) {
+  const counts = new Map();
+  for (const interaction of interactions) {
+    if (validRating(interaction.rating)) {
+      counts.set(interaction.rating, (counts.get(interaction.rating) || 0) + 1);
+    }
+  }
+  return Array.from({ length: 10 }, (_, index) => ({
+    rating: index + 1,
+    count: counts.get(index + 1) || 0,
+  }));
+}
+
+async function authenticateAdmin(input) {
+  const parsed = parseInput("authenticateAdmin", input);
+  const storage = getStorage();
+  const usernameKey = normalizeAdminUsername(parsed.username);
+  let admin;
+  if (storage.kind === "memory") {
+    admin = (storage.data.admins || []).find(
+      (candidate) => candidate.username_key === usernameKey,
+    );
+  } else {
+    admin = await storage.db
+      .collection("admins")
+      .findOne({ username_key: usernameKey });
+  }
+  const passwordMatches = verifyPassword(parsed.password, admin || DUMMY_ADMIN);
+  if (
+    !admin ||
+    !passwordMatches ||
+    admin.active !== true ||
+    admin.role !== "admin"
+  ) {
+    throw new ToolError(
+      "ADMIN_INVALID_CREDENTIALS",
+      "El usuario o la contraseña son incorrectos",
+    );
+  }
+  return {
+    admin: {
+      id: serializeId(admin._id),
+      username: admin.username,
+      role: admin.role,
+    },
+  };
+}
+
+async function getAdminOverview(input) {
+  parseInput("getAdminOverview", input);
+  const storage = getStorage();
+  if (storage.kind === "memory") {
+    const interactions = storage.data.interactions;
+    const rated = interactions.filter((item) => validRating(item.rating));
+    const average =
+      rated.length > 0
+        ? rated.reduce((sum, item) => sum + item.rating, 0) / rated.length
+        : null;
+    const latest = interactions.reduce((result, item) => {
+      const timestamp = new Date(item.created_at).getTime();
+      return Number.isFinite(timestamp) && timestamp > result
+        ? timestamp
+        : result;
+    }, 0);
+    return {
+      storage: storage.kind,
+      persistent: false,
+      totals: {
+        users: storage.data.users.length,
+        interfaces: interactions.length,
+        rated: rated.length,
+        unrated: interactions.length - rated.length,
+        average_rating: roundedAverage(average),
+      },
+      rating_distribution: ratingRowsFromMemory(interactions),
+      components: componentRowsFromMemory(interactions),
+      latest_activity: latest ? new Date(latest).toISOString() : null,
+    };
+  }
+
+  const [userCount, totalRows, ratingRows, componentRows] = await Promise.all([
+    storage.db.collection("users").countDocuments({}),
+    storage.db
+      .collection("interactions")
+      .aggregate([
+        {
+          $group: {
+            _id: null,
+            interfaces: { $sum: 1 },
+            rated: {
+              $sum: { $cond: [mongoRatingIsValid(), 1, 0] },
+            },
+            average_rating: {
+              $avg: {
+                $cond: [mongoRatingIsValid(), "$rating", null],
+              },
+            },
+            latest_activity: { $max: "$created_at" },
+          },
+        },
+      ])
+      .toArray(),
+    storage.db
+      .collection("interactions")
+      .aggregate([
+        { $match: { rating: { $gte: 1, $lte: 10 } } },
+        { $group: { _id: "$rating", count: { $sum: 1 } } },
+        { $sort: { _id: 1 } },
+      ])
+      .toArray(),
+    storage.db
+      .collection("interactions")
+      .aggregate([
+        {
+          $group: {
+            _id: { $ifNull: ["$response.component", "unknown"] },
+            count: { $sum: 1 },
+            rated_count: {
+              $sum: { $cond: [mongoRatingIsValid(), 1, 0] },
+            },
+          },
+        },
+        { $sort: { count: -1, _id: 1 } },
+      ])
+      .toArray(),
+  ]);
+  const totals = totalRows[0] || {};
+  const interfaces = Number(totals.interfaces || 0);
+  const rated = Number(totals.rated || 0);
+  const ratingCounts = new Map(
+    ratingRows.map((row) => [Number(row._id), Number(row.count)]),
+  );
+  return {
+    storage: storage.kind,
+    persistent: true,
+    totals: {
+      users: userCount,
+      interfaces,
+      rated,
+      unrated: interfaces - rated,
+      average_rating: roundedAverage(totals.average_rating),
+    },
+    rating_distribution: Array.from({ length: 10 }, (_, index) => ({
+      rating: index + 1,
+      count: ratingCounts.get(index + 1) || 0,
+    })),
+    components: componentRows.map((row) => ({
+      component: row._id,
+      count: Number(row.count),
+      rated_count: Number(row.rated_count),
+    })),
+    latest_activity: totals.latest_activity
+      ? serializeDate(totals.latest_activity)
+      : null,
+  };
+}
+
+async function listAdminUsers(input) {
+  const parsed = parseInput("listAdminUsers", input);
+  const storage = getStorage();
+  const page = parsed.page || 1;
+  const pageSize = parsed.pageSize || 25;
+  const offset = (page - 1) * pageSize;
+  if (storage.kind === "memory") {
+    const search = normalizeAdminUsername(parsed.search || "");
+    const users = storage.data.users
+      .filter((user) => {
+        if (!search) return true;
+        return [user._id, user.name, user.username, user.email]
+          .map(normalizeAdminUsername)
+          .some((value) => value.includes(search));
+      })
+      .sort((left, right) =>
+        String(left.name || "").localeCompare(String(right.name || ""), "es"),
+      );
+    const items = users.slice(offset, offset + pageSize).map((user) => {
+      const interactions = storage.data.interactions.filter(
+        (item) => serializeId(item.user_id) === serializeId(user._id),
+      );
+      const rated = interactions.filter((item) => validRating(item.rating));
+      const last = interactions
+        .map((item) => item.created_at)
+        .sort((left, right) => new Date(right) - new Date(left))[0];
+      return publicAdminUser(user, {
+        interaction_count: interactions.length,
+        rated_count: rated.length,
+        average_rating:
+          rated.length > 0
+            ? rated.reduce((sum, item) => sum + item.rating, 0) / rated.length
+            : null,
+        last_activity: last,
+      });
+    });
+    return pagingResult(items, users.length, page, pageSize);
+  }
+
+  const query = {};
+  if (parsed.search) {
+    const expression = escapedSearchExpression(parsed.search);
+    query.$or = [
+      { name: expression },
+      { username: expression },
+      { email: expression },
+    ];
+  }
+  const usersCollection = storage.db.collection("users");
+  const [total, users] = await Promise.all([
+    usersCollection.countDocuments(query),
+    usersCollection
+      .find(query)
+      .project({ name: 1, username: 1, email: 1, accounts: 1 })
+      .sort({ name: 1, _id: 1 })
+      .skip(offset)
+      .limit(pageSize)
+      .toArray(),
+  ]);
+  const userIds = users.map((user) => user._id);
+  const activities = userIds.length
+    ? await storage.db
+        .collection("interactions")
+        .aggregate([
+          { $match: { user_id: { $in: userIds } } },
+          {
+            $group: {
+              _id: "$user_id",
+              interaction_count: { $sum: 1 },
+              rated_count: {
+                $sum: { $cond: [mongoRatingIsValid(), 1, 0] },
+              },
+              average_rating: {
+                $avg: {
+                  $cond: [mongoRatingIsValid(), "$rating", null],
+                },
+              },
+              last_activity: { $max: "$created_at" },
+            },
+          },
+        ])
+        .toArray()
+    : [];
+  const activityByUser = new Map(
+    activities.map((activity) => [serializeId(activity._id), activity]),
+  );
+  return pagingResult(
+    users.map((user) =>
+      publicAdminUser(user, activityByUser.get(serializeId(user._id))),
+    ),
+    total,
+    page,
+    pageSize,
+  );
+}
+
+function memoryInteractionMatches(interaction, parsed) {
+  if (
+    parsed.userId &&
+    serializeId(interaction.user_id) !== serializeId(parsed.userId)
+  ) {
+    return false;
+  }
+  if (
+    parsed.search &&
+    !normalizeAdminUsername(interaction.prompt).includes(
+      normalizeAdminUsername(parsed.search),
+    )
+  ) {
+    return false;
+  }
+  if (
+    parsed.component &&
+    interactionComponent(interaction) !== parsed.component
+  ) {
+    return false;
+  }
+  if (parsed.rating !== undefined && interaction.rating !== parsed.rating) {
+    return false;
+  }
+  if (
+    parsed.ratingStatus === "rated" &&
+    !validRating(interaction.rating)
+  ) {
+    return false;
+  }
+  if (
+    parsed.ratingStatus === "unrated" &&
+    validRating(interaction.rating)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+async function listAdminInteractions(input) {
+  const parsed = parseInput("listAdminInteractions", input);
+  const storage = getStorage();
+  const page = parsed.page || 1;
+  const pageSize = parsed.pageSize || 25;
+  const offset = (page - 1) * pageSize;
+  if (storage.kind === "memory") {
+    const interactions = storage.data.interactions
+      .filter((item) => memoryInteractionMatches(item, parsed))
+      .sort(
+        (left, right) =>
+          new Date(right.created_at).getTime() -
+          new Date(left.created_at).getTime(),
+      );
+    const users = new Map(
+      storage.data.users.map((user) => [serializeId(user._id), user]),
+    );
+    const items = interactions
+      .slice(offset, offset + pageSize)
+      .map((item) =>
+        publicAdminInteraction(item, users.get(serializeId(item.user_id))),
+      );
+    return pagingResult(items, interactions.length, page, pageSize);
+  }
+
+  const query = {};
+  if (parsed.userId) query.user_id = { $in: idCandidates(parsed.userId) };
+  if (parsed.search) query.prompt = escapedSearchExpression(parsed.search);
+  if (parsed.component) query["response.component"] = parsed.component;
+  if (parsed.rating !== undefined) {
+    query.rating = parsed.rating;
+  } else if (parsed.ratingStatus === "rated") {
+    query.rating = { $type: "number", $gte: 1, $lte: 10 };
+  } else if (parsed.ratingStatus === "unrated") {
+    query.$nor = [
+      { rating: { $type: "number", $gte: 1, $lte: 10 } },
+    ];
+  }
+  const collection = storage.db.collection("interactions");
+  const [total, interactions] = await Promise.all([
+    collection.countDocuments(query),
+    collection
+      .find(query)
+      .project({
+        prompt: 1,
+        "response.component": 1,
+        rating: 1,
+        rated_at: 1,
+        created_at: 1,
+        user_id: 1,
+      })
+      .sort({ created_at: -1, _id: -1 })
+      .skip(offset)
+      .limit(pageSize)
+      .toArray(),
+  ]);
+  const rawUserIds = [...new Set(interactions.map((item) => item.user_id))];
+  const userCandidates = rawUserIds.flatMap(idCandidates);
+  const users = userCandidates.length
+    ? await storage.db
+        .collection("users")
+        .find({ _id: { $in: userCandidates } })
+        .project({ name: 1, username: 1 })
+        .toArray()
+    : [];
+  const usersById = new Map(users.map((user) => [serializeId(user._id), user]));
+  return pagingResult(
+    interactions.map((item) =>
+      publicAdminInteraction(
+        item,
+        usersById.get(serializeId(item.user_id)),
+      ),
+    ),
+    total,
+    page,
+    pageSize,
+  );
+}
+
+async function getAdminInteraction(input) {
+  const parsed = parseInput("getAdminInteraction", input);
+  const storage = getStorage();
+  let interaction;
+  let user;
+  if (storage.kind === "memory") {
+    interaction = storage.data.interactions.find(
+      (item) => serializeId(item._id) === parsed.interactionId,
+    );
+    user = interaction
+      ? storage.data.users.find(
+          (candidate) =>
+            serializeId(candidate._id) === serializeId(interaction.user_id),
+        )
+      : null;
+  } else {
+    interaction = await storage.db.collection("interactions").findOne({
+      _id: { $in: idCandidates(parsed.interactionId) },
+    });
+    user = interaction
+      ? await findUser(storage, interaction.user_id)
+      : null;
+  }
+  if (!interaction) {
+    throw new ToolError(
+      "INTERACTION_NOT_FOUND",
+      "No se encontró la interacción",
+    );
+  }
+  return {
+    ...publicAdminInteraction(interaction, user),
+    response: clone(interaction.response),
+  };
+}
+
 async function saveInteraction(input) {
   const { userId, prompt, response } = parseInput("saveInteraction", input);
   const storage = getStorage();
@@ -1709,6 +2335,11 @@ const handlers = Object.freeze({
   add_account: addAccount,
   get_financial_summary: getFinancialSummary,
   get_transaction_detail: getTransactionDetail,
+  authenticateAdmin,
+  getAdminOverview,
+  listAdminUsers,
+  listAdminInteractions,
+  getAdminInteraction,
 });
 
 module.exports = {
@@ -1716,8 +2347,11 @@ module.exports = {
   ToolError,
   addAccount,
   addContact,
+  authenticateAdmin,
   createTransaction,
   deleteContact,
+  getAdminInteraction,
+  getAdminOverview,
   getBalance,
   getContacts,
   getCreditPlans,
@@ -1726,6 +2360,8 @@ module.exports = {
   getTransactionDetail,
   handlers,
   inputSchemas,
+  listAdminInteractions,
+  listAdminUsers,
   normalizeAlias,
   normalizeMoney,
   registerAccount,
