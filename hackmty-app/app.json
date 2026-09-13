@@ -12,13 +12,15 @@
       "backgroundColor": "#EB0029"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "icon": "./src/assets/logo_app.png"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./src/assets/logo_app.png",
         "backgroundColor": "#EB0029"
       },
+      "icon": "./src/assets/logo_app.png",
       "usesCleartextTraffic": true
     },
     "plugins": [
