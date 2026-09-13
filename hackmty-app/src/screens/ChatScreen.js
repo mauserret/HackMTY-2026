@@ -45,12 +45,17 @@ export default function ChatScreen() {
     notification,
     rateInteraction,
     sendMessage,
+    session, // <--- Obtenemos la sesión del usuario aquí
   } = useBanking();
   const insets = useSafeAreaInsets();
   const listRef = useRef(null);
 
   // Estado para controlar el modal de voz tipo "Modo Live"
   const [isLiveModalVisible, setIsLiveModalVisible] = useState(false);
+
+  // Extraemos la inicial del usuario logueado en mayúscula
+  const userName = session?.name || "Usuario";
+  const userInitial = userName.trim().charAt(0).toUpperCase();
 
   const renderItem = useCallback(
     ({ item }) => {
@@ -119,7 +124,8 @@ export default function ChatScreen() {
             <Text style={styles.onlineText}>En línea</Text>
           </View>
           <View style={styles.badgeIconButton}>
-            <Text style={styles.badgeIconLetter}>B</Text>
+            {/* Inicial dinámica del usuario actual */}
+            <Text style={styles.badgeIconLetter}>{userInitial}</Text>
           </View>
           <View style={styles.logoutButton}>
             <Feather name="message-square" size={18} color="#EB0029" />
@@ -369,7 +375,7 @@ const styles = StyleSheet.create({
   },
   userBubble: {
     maxWidth: "84%",
-    backgroundColor: '#5B6670', // Gris Banorte aplicado en las burbujas
+    backgroundColor: '#5B6670',
     borderRadius: 16,
     borderBottomRightRadius: 4,
     paddingHorizontal: 13,

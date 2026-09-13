@@ -14,7 +14,12 @@ import {
 } from "../theme";
 
 export default function StatisticsScreen() {
-  const { messages, overview, logout } = useBanking();
+  const { messages, overview, session, logout } = useBanking();
+  
+  // Extraemos el nombre y calculamos la inicial en mayúscula de forma dinámica
+  const userName = session?.name || "Usuario";
+  const userInitial = userName.trim().charAt(0).toUpperCase();
+
   const metrics = useMemo(() => {
     const movements = overview?.movements || [];
     const accounts = overview?.accounts || [];
@@ -66,7 +71,8 @@ export default function StatisticsScreen() {
             <Text style={styles.onlineText}>En línea</Text>
           </View>
           <View style={styles.badgeIconButton}>
-            <Text style={styles.badgeIconLetter}>B</Text>
+            {/* Inicial dinámica del usuario logueado */}
+            <Text style={styles.badgeIconLetter}>{userInitial}</Text>
           </View>
           <Pressable onPress={logout} style={styles.logoutButton} accessibilityRole="button">
             <Feather name="log-out" size={18} color="#EB0029" />

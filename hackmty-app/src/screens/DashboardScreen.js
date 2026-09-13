@@ -43,8 +43,10 @@ export default function DashboardScreen({ navigation }) {
             <Text style={styles.onlineText}>En línea</Text>
           </View>
           <View style={styles.badgeIconButton}>
-            <Text style={styles.badgeIconLetter}>B</Text>
-          </View>
+            <Text style={styles.badgeIconLetter}>
+            {userName ? userName.charAt(0).toUpperCase() : "B"}
+          </Text>
+        </View>
           <Pressable onPress={logout} style={styles.logoutButton} accessibilityRole="button">
             <Feather name="log-out" size={18} color="#EB0029" />
           </Pressable>
