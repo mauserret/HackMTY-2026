@@ -119,6 +119,7 @@ Consulta `hackmty-backend/.env.example` para la lista completa:
 - `GEMINI_MODEL`: por defecto `gemini-3.6-flash`.
 - `ELEVENLABS_API_KEY`: habilita narración TTS al tocar el speaker en el chat.
 - `ELEVENLABS_VOICE_ID` / `ELEVENLABS_MODEL_ID`: voz y modelo de ElevenLabs.
+- `ELEVENLABS_SPEED`: velocidad de narración (`0.7`–`1.2`, por defecto `1.0`).
 - `DEMO_PASSWORD`: por defecto `1234`.
 - `ADMIN_SESSION_SECRET`: firma las sesiones administrativas.
 - `ADMIN_ALLOWED_ORIGINS`: orígenes web adicionales permitidos.

@@ -41,12 +41,14 @@ test("synthesizeSpeech convierte la respuesta de ElevenLabs a base64", async () 
       ELEVENLABS_API_KEY: "test-key",
       ELEVENLABS_VOICE_ID: "voice-demo",
       ELEVENLABS_MODEL_ID: "eleven_multilingual_v2",
+      ELEVENLABS_SPEED: "1.15",
     },
     fetchImpl: async (url, options) => {
       assert.match(url, /voice-demo/);
       assert.equal(options.headers["xi-api-key"], "test-key");
       const body = JSON.parse(options.body);
       assert.equal(body.text, "Saldo disponible");
+      assert.equal(body.voice_settings.speed, 1.15);
       return {
         ok: true,
         arrayBuffer: async () => Buffer.from("fake-mp3"),
@@ -55,7 +57,16 @@ test("synthesizeSpeech convierte la respuesta de ElevenLabs a base64", async () 
   });
 
   assert.equal(audio.mimeType, "audio/mpeg");
+  assert.equal(audio.speed, 1.15);
   assert.equal(audio.audioBase64, Buffer.from("fake-mp3").toString("base64"));
+});
+
+test("parseSpeed limita la velocidad al rango de ElevenLabs", () => {
+  const { parseSpeed } = require("../tts");
+  assert.equal(parseSpeed("1"), 1);
+  assert.equal(parseSpeed("0.5"), 0.7);
+  assert.equal(parseSpeed("2"), 1.2);
+  assert.equal(parseSpeed("abc"), 1);
 });
 
 test("POST /api/tts valida el body y responde error sin configuración", async () => {

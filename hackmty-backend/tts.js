@@ -9,6 +9,9 @@ const ENV_PATH = path.join(__dirname, ".env");
 const MAX_TTS_CHARS = 2_500;
 const DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM";
 const DEFAULT_MODEL_ID = "eleven_multilingual_v2";
+const DEFAULT_SPEED = 1;
+const MIN_SPEED = 0.7;
+const MAX_SPEED = 1.2;
 
 const ttsBodySchema = z.object({
   text: z.string().trim().min(1).max(MAX_TTS_CHARS),
@@ -37,6 +40,12 @@ function readEnvFileValue(key) {
   }
 }
 
+function parseSpeed(value, fallback = DEFAULT_SPEED) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.round(numeric * 100) / 100));
+}
+
 function getElevenLabsConfig(env = process.env) {
   const usingProcessEnv = env === process.env;
   if (usingProcessEnv) {
@@ -46,6 +55,7 @@ function getElevenLabsConfig(env = process.env) {
   let apiKey = String(env.ELEVENLABS_API_KEY || "").trim();
   let voiceId = String(env.ELEVENLABS_VOICE_ID || "").trim();
   let modelId = String(env.ELEVENLABS_MODEL_ID || "").trim();
+  let speedRaw = String(env.ELEVENLABS_SPEED || "").trim();
 
   // Fallback directo al archivo si el proceso arrancó con la variable vacía.
   if (usingProcessEnv && !apiKey) {
@@ -57,11 +67,15 @@ function getElevenLabsConfig(env = process.env) {
   if (usingProcessEnv && !modelId) {
     modelId = readEnvFileValue("ELEVENLABS_MODEL_ID");
   }
+  if (usingProcessEnv && !speedRaw) {
+    speedRaw = readEnvFileValue("ELEVENLABS_SPEED");
+  }
 
   voiceId = voiceId || DEFAULT_VOICE_ID;
   modelId = modelId || DEFAULT_MODEL_ID;
+  const speed = parseSpeed(speedRaw, DEFAULT_SPEED);
 
-  return { apiKey, voiceId, modelId, configured: Boolean(apiKey) };
+  return { apiKey, voiceId, modelId, speed, configured: Boolean(apiKey) };
 }
 
 function normalizeSpeakText(text) {
@@ -109,6 +123,7 @@ async function synthesizeSpeech(
       voice_settings: {
         stability: 0.4,
         similarity_boost: 0.75,
+        speed: config.speed,
       },
     }),
   });
@@ -137,6 +152,7 @@ async function synthesizeSpeech(
     bytes: buffer.length,
     voiceId: config.voiceId,
     modelId: config.modelId,
+    speed: config.speed,
   };
 }
 
@@ -150,6 +166,7 @@ function createTtsRouter({ synthesize = synthesizeSpeech } = {}) {
       configured: config.configured,
       voice_id: config.voiceId,
       model_id: config.modelId,
+      speed: config.speed,
       env_path: ENV_PATH,
     });
   });
@@ -189,10 +206,14 @@ function createTtsRouter({ synthesize = synthesizeSpeech } = {}) {
 module.exports = {
   ENV_PATH,
   MAX_TTS_CHARS,
+  MIN_SPEED,
+  MAX_SPEED,
+  DEFAULT_SPEED,
   createTtsRouter,
   getElevenLabsConfig,
   loadEnvFile,
   normalizeSpeakText,
+  parseSpeed,
   synthesizeSpeech,
   ttsBodySchema,
 };

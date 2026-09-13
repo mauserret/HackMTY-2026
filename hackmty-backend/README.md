@@ -161,7 +161,8 @@ intérprete local consulta MCP y cubre:
 
 `ELEVENLABS_API_KEY` habilita la narración bajo demanda (`POST /api/tts`).
 El cliente solo habla cuando el usuario toca el icono de speaker de una
-respuesta. `ELEVENLABS_VOICE_ID` y `ELEVENLABS_MODEL_ID` son opcionales.
+respuesta. `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL_ID` y `ELEVENLABS_SPEED`
+(`0.7`–`1.2`, por defecto `1.0`) son opcionales.
 
 Gemini no participa en la conversión de voz.
 
