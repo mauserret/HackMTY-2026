@@ -125,7 +125,8 @@ estas decisiones.
 25. **El catálogo MCP se amplió sin romper consumidores anteriores.** Se
     conservaron las seis tools camelCase y se agregaron operaciones snake_case
     para cuentas registradas y analítica, incluidas `register_account` y
-    `delete_contact`. El gateway valida las 14 tools.
+    `delete_contact`. El gateway valida 19 tools: 14 de negocio y cinco
+    internas de administración.
 26. **Las cuentas destino se registran por nombre + CLABE.** El documento en
     `contacts` guarda `name`, `name_key` y `clabe`. Editar ese nombre solo
     muta el registro del dueño; el `users.name` del titular no cambia. La UI
@@ -136,3 +137,15 @@ estas decisiones.
     Barras, pastel y línea se renderizan con `react-native-svg`, versión
     alineada por Expo. El backend decide el tipo a partir de la solicitud y
     entrega únicamente datos estructurados.
+28. **La administración es una aplicación web independiente.**
+    `hackmty-admin` usa React DOM, React Router, Axios y Vite, sin cargar Expo
+    ni `BankingProvider`. El navegador consume una API HTTP protegida y nunca
+    recibe credenciales de MongoDB.
+29. **La auditoría reutiliza la frontera MCP.** El API administrativo no abre
+    una conexión paralela a Atlas: consulta usuarios, `interactions`, A2UI y
+    ratings mediante cinco tools internas excluidas del catálogo disponible
+    para Gemini.
+30. **El administrador tiene una sesión aislada.** La cuenta `admin` se
+    siembra de forma idempotente, su contraseña usa `scrypt` y la sesión viaja
+    en una cookie HMAC `HttpOnly`. Los intentos de login y orígenes web se
+    validan antes de exponer datos de auditoría.
