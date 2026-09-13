@@ -59,6 +59,24 @@ npm run ios
 
 Después de instalarla, Metro puede iniciarse con `npm run start:dev`.
 
+### Paquete de idioma (español)
+
+Android puede exigir el modelo offline de español cuando el servicio activo es
+`com.google.android.as`. La app ya:
+
+1. Usa primero el español ya instalado en el teléfono (`es-US`, `es-MX`, `es-ES`, …).
+2. Prefiere Google Search / TTS antes que el motor on-device.
+3. Si falta el paquete, abre la descarga del sistema (`androidTriggerOfflineModelDownload`)
+   y muestra el botón **Instalar español**.
+
+Si el diálogo no aparece, instálalo a mano:
+
+1. Ajustes → Sistema → Idiomas → **Reconocimiento de voz en el dispositivo**
+   (o Ajustes → Google → Ajustes de búsqueda → Voz).
+2. Descarga **Español (México)** o **Español**.
+3. Actualiza la app **Google** / **Speech Services by Google**.
+4. Vuelve a tocar el micrófono en el chat.
+
 La barra inferior se oculta con el teclado, Android usa modo `pan`, iOS ajusta
 el contenido con `KeyboardAvoidingView` y el compositor respeta los insets del
 dispositivo.

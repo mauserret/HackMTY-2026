@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Keyboard,
   Platform,
@@ -10,6 +10,8 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import {
+  downloadSpanishRecognitionModel,
+  resolveSpanishRecognitionConfig,
   SpeechRecognitionModule,
   useSpeechRecognitionEvent,
 } from "../services/speechRecognition";
@@ -27,24 +29,13 @@ const ERROR_MESSAGES = {
   "service-not-allowed":
     "El reconocimiento de voz no está habilitado en este dispositivo.",
   "language-not-supported":
-    "El dispositivo no tiene disponible el reconocimiento en español.",
+    "El servicio de voz necesita instalar el modelo de español.",
   network: "El servicio de voz de Google no tiene conexión.",
   "no-speech": "No detectamos voz. Intenta hablar un poco más cerca.",
   "speech-timeout": "No detectamos voz a tiempo. Intenta de nuevo.",
   "audio-capture": "No fue posible acceder al micrófono.",
   busy: "El reconocimiento de voz está ocupado. Espera un momento.",
 };
-
-function getGoogleRecognitionService() {
-  if (Platform.OS !== "android") return undefined;
-  const services =
-    SpeechRecognitionModule?.getSpeechRecognitionServices?.() || [];
-  return [
-    "com.google.android.googlequicksearchbox",
-    "com.google.android.as",
-    "com.google.android.tts",
-  ].find((service) => services.includes(service));
-}
 
 export default function Composer({
   onSend,
@@ -56,6 +47,10 @@ export default function Composer({
   const [recognizing, setRecognizing] = useState(false);
   const [voiceDraft, setVoiceDraft] = useState(false);
   const [error, setError] = useState("");
+  const [languageSetupRequired, setLanguageSetupRequired] = useState(false);
+  const [installingLanguage, setInstallingLanguage] = useState(false);
+  const speechConfigRef = useRef({ lang: "es-US" });
+  const downloadAttemptedRef = useRef(false);
 
   useSpeechRecognitionEvent("start", () => {
     setRecognizing(true);
@@ -72,6 +67,18 @@ export default function Composer({
   useSpeechRecognitionEvent("error", (event) => {
     setRecognizing(false);
     if (event.error === "aborted") return;
+    const languageUnavailable =
+      event.error === "language-not-supported" ||
+      /idioma|language|locale|paquete/i.test(event.message || "");
+    if (languageUnavailable && Platform.OS === "android") {
+      setLanguageSetupRequired(true);
+      setError(ERROR_MESSAGES["language-not-supported"]);
+      if (!downloadAttemptedRef.current) {
+        downloadAttemptedRef.current = true;
+        installSpanishLanguage();
+      }
+      return;
+    }
     setError(
       ERROR_MESSAGES[event.error] ||
         event.message ||
@@ -89,6 +96,40 @@ export default function Composer({
     },
     [],
   );
+
+  async function installSpanishLanguage() {
+    if (installingLanguage) return;
+    setInstallingLanguage(true);
+    setError("Preparando el reconocimiento en español…");
+    try {
+      const result = await downloadSpanishRecognitionModel(
+        speechConfigRef.current.lang,
+      );
+      if (result.status === "download_success") {
+        setLanguageSetupRequired(false);
+        setError("Español instalado. Vuelve a tocar el micrófono.");
+      } else if (result.status === "download_scheduled") {
+        setError(
+          "La descarga de español quedó programada. Conéctate a Wi-Fi y vuelve a intentarlo.",
+        );
+      } else if (result.status === "opened_dialog") {
+        setError(
+          "Completa la descarga de Español en la ventana del sistema y vuelve a tocar el micrófono.",
+        );
+      } else {
+        setError(
+          "Instala Español desde Ajustes > Sistema > Idiomas > Reconocimiento de voz.",
+        );
+      }
+    } catch (languageError) {
+      setError(
+        languageError?.message ||
+          "No fue posible abrir la descarga. Actualiza la app de Google e instala Español en sus ajustes de voz.",
+      );
+    } finally {
+      setInstallingLanguage(false);
+    }
+  }
 
   const submitText = () => {
     const clean = text.trim();
@@ -125,8 +166,17 @@ export default function Composer({
         return;
       }
 
+      const speechConfig = await resolveSpanishRecognitionConfig();
+      speechConfigRef.current = speechConfig;
+      if (speechConfig.requiresLanguageDownload) {
+        setLanguageSetupRequired(true);
+        await installSpanishLanguage();
+        return;
+      }
+
+      setLanguageSetupRequired(false);
       SpeechRecognitionModule.start({
-        lang: "es-MX",
+        lang: speechConfig.lang,
         interimResults: true,
         continuous: false,
         maxAlternatives: 1,
@@ -141,7 +191,8 @@ export default function Composer({
           "crédito",
           "CAT",
         ],
-        androidRecognitionServicePackage: getGoogleRecognitionService(),
+        androidRecognitionServicePackage:
+          speechConfig.androidRecognitionServicePackage,
       });
     } catch (recognitionError) {
       setRecognizing(false);
@@ -262,9 +313,26 @@ export default function Composer({
       </View>
 
       {error ? (
-        <Text style={styles.error} accessibilityRole="alert">
-          {error}
-        </Text>
+        <View style={styles.errorRow}>
+          <Text style={styles.error} accessibilityRole="alert">
+            {error}
+          </Text>
+          {languageSetupRequired && Platform.OS === "android" ? (
+            <Pressable
+              accessibilityRole="button"
+              disabled={installingLanguage}
+              onPress={installSpanishLanguage}
+              style={({ pressed }) => [
+                styles.languageButton,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={styles.languageButtonText}>
+                {installingLanguage ? "Preparando…" : "Instalar español"}
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
       ) : null}
     </View>
   );
@@ -367,10 +435,29 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   error: {
+    flex: 1,
     color: colors.red,
     fontFamily,
     fontSize: 10,
     lineHeight: 14,
     paddingBottom: 4,
+  },
+  errorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  languageButton: {
+    borderRadius: radii.pill,
+    backgroundColor: colors.errorSoft,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 4,
+  },
+  languageButtonText: {
+    color: colors.red,
+    fontFamily,
+    fontSize: 10,
+    fontWeight: "700",
   },
 });

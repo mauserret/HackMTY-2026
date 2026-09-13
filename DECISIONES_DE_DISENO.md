@@ -55,7 +55,9 @@ estas decisiones.
     usuario puede revisar la transcripción antes de enviarla. Como Expo Go no
     admite módulos nativos de terceros, los scripts móviles generan una
     development build; una carga accidental en Expo Go degrada solo el
-    micrófono y no cierra toda la aplicación.
+    micrófono y no cierra toda la aplicación. Ante `language-not-supported`,
+    se elige un locale español instalado o se dispara la descarga del modelo
+    offline en Android 13+, con botón de reintento en el compositor.
 11. **MongoDB Atlas es la persistencia objetivo, con memoria para onboarding.**
     Sin `MONGODB_URI`, o si Atlas no está disponible y Mongo no fue marcado como
     obligatorio, el subproceso MCP crea datos efímeros para ejecutar la demo.
